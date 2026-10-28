@@ -1,0 +1,25 @@
+[package]
+name = "nix-rebuild"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Interactive NixOS and Home Manager rebuild interface"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5"
+crossterm = "0.29"
+flate2 = "1.1.10"
+nix = { version = "0.30", features = ["process", "signal", "user"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "scrolling-regions"] }
+regex = "1.12"
+serde_json = "1.0"
+signal-hook = "0.3"
+unicode-width = "0.2"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+temp-env = "0.3"
