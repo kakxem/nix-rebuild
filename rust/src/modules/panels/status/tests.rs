@@ -576,6 +576,65 @@ fn escape_requests_cancellation_and_enter_confirms_it() {
 }
 
 #[test]
+fn the_childs_last_events_cannot_undo_a_confirmed_cancel() {
+    // A killed child leaves output behind: its pipe buffer and the Nix log file still hold
+    // what it wrote, and those lines arrive after the run was stopped.
+    let mut app = app_with_phase(Phase::Building);
+    app.confirm_cancel();
+    assert_eq!(app.status.phase, Phase::Cancelling, "the run is stopping");
+
+    app.status.apply_started(true, "building aaaa-unit".into());
+    assert_eq!(
+        app.status.phase,
+        Phase::Cancelling,
+        "the badge stays where the user put it"
+    );
+    assert_eq!(
+        app.status.message, "stopping Nix safely",
+        "and the line keeps saying what is happening"
+    );
+
+    app.status
+        .note_plain_message("copying '/nix/store/x' to the store");
+    app.status.note_activity_progress("copying", "aaaa-unit");
+    assert_eq!(
+        app.status.phase,
+        Phase::Cancelling,
+        "no stale line revives a stopped run"
+    );
+    assert_eq!(app.status.message, "stopping Nix safely");
+}
+
+#[test]
+fn a_confirmed_cancel_settles_even_when_the_child_is_already_gone() {
+    let mut app = app_with_phase(Phase::Building);
+    app.confirm_cancel();
+    app.settle_cancel(false);
+    assert_eq!(app.status.phase, Phase::Cancelled);
+    assert_eq!(app.status.exit_code, 130);
+    assert_eq!(
+        app.status.message, "rebuild cancelled; activation state may have changed",
+        "and it says what the stop may have left behind"
+    );
+
+    // A second confirmation used to sit on `cancelling` forever: Esc did not close the
+    // frame, Enter did nothing, and only Ctrl+C got out of it.
+    app.confirm_cancel();
+    app.settle_cancel(false);
+    assert_eq!(
+        app.status.phase,
+        Phase::Cancelled,
+        "the second answer settles the same way"
+    );
+    let escaped = press(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(
+        escaped,
+        Some(Command::Quit),
+        "and Esc closes the frame instead of asking again"
+    );
+}
+
+#[test]
 fn cancellation_choices_are_clickable_buttons() {
     use crate::common::hit_targets::Click;
 

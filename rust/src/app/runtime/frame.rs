@@ -119,18 +119,14 @@ pub(crate) fn run_terminal(
                 let _ = child.wait();
             }
             child_finished = true;
-            app.finish_all(true);
-            app.status.phase = Phase::Cancelled;
-            app.status.message = "rebuild cancelled; activation state may have changed".into();
-            app.status.exit_code = 130;
-        } else if app.status.cancel_requested
-            && cleanup_started
-            && app.status.phase == Phase::Cancelling
-        {
-            cleanup_control.cancel();
-            app.status.phase = Phase::Cancelled;
-            app.status.message = "cleanup cancelled; rebuild activation remains in place".into();
-            app.status.exit_code = 130;
+        }
+        // Settle on the confirmation, not on the kill: a second answer, or a child that was
+        // already gone, otherwise leaves `cancelling` on screen with no key that leaves it.
+        if app.status.cancel_requested && app.status.phase == Phase::Cancelling {
+            if cleanup_started {
+                cleanup_control.cancel();
+            }
+            app.settle_cancel(cleanup_started);
         }
 
         if !child_finished

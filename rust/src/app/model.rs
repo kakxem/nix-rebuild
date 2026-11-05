@@ -315,6 +315,19 @@ impl App {
         self.status.confirm_cancel();
     }
 
+    /// Settle a confirmed cancel. The frame calls it on every pass while the run says
+    /// it is stopping, so a second answer can never leave `cancelling` on screen.
+    pub fn settle_cancel(&mut self, cleanup_started: bool) {
+        if cleanup_started {
+            self.status.message = "cleanup cancelled; rebuild activation remains in place".into();
+        } else {
+            self.finish_all(true);
+            self.status.message = "rebuild cancelled; activation state may have changed".into();
+        }
+        self.status.phase = Phase::Cancelled;
+        self.status.exit_code = 130;
+    }
+
     pub fn open_overlay(&mut self, overlay: Overlay) {
         if self.overlay_return == Overlay::None && self.overlay != Overlay::None {
             self.overlay_return = self.overlay;

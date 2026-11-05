@@ -70,9 +70,18 @@ impl State {
         }
     }
 
+    /// A confirmed cancel is final: the last events a killed child wrote are still in its
+    /// pipe and in the Nix log file, and they must not put the run back to work.
+    fn output_is_stale(&self) -> bool {
+        self.cancel_requested
+    }
+
     /// Apply what an Activity row's start reports: the run owns the phase badge and the
     /// status, the panel keeps its own rows.
     pub fn apply_started(&mut self, building: bool, status: String) {
+        if self.output_is_stale() {
+            return;
+        }
         if building {
             self.phase = Phase::Building;
         }
@@ -96,6 +105,9 @@ impl State {
     }
 
     pub fn note_plain_message(&mut self, text: &str) {
+        if self.output_is_stale() {
+            return;
+        }
         self.phase = Phase::Evaluating;
         self.message = NixEvent::from_output(text).summary().to_owned();
     }
@@ -113,6 +125,9 @@ impl State {
     }
 
     pub fn note_activity_progress(&mut self, phase: &str, name: &str) {
+        if self.output_is_stale() {
+            return;
+        }
         self.message = format!("{phase} {name}");
     }
 
