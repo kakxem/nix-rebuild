@@ -7,14 +7,17 @@ use clap::{Parser, ValueEnum};
 use crate::common::cleanup_policy::CleanupPolicy;
 use crate::common::scope::Scope;
 
-/// What a run does: an activation, the update sequence, or `runs` (a run that already happened).
+/// What a run does: an activation, the update sequence, or a verb that only reads the state
+/// a run left behind (`runs`, `locks`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     System,
     Home,
     Update,
-    /// Not a rebuild: opens, lists or deletes recorded runs.
+    /// Not a rebuild of its own: opens, lists or deletes recorded runs.
     Runs,
+    /// Puts a kept lock file back on the checkout and rebuilds with it.
+    Locks,
     /// Not a rebuild either: the settings card in a frame of its own.
     Settings,
 }
@@ -26,6 +29,7 @@ impl ValueEnum for Target {
             Self::Home,
             Self::Update,
             Self::Runs,
+            Self::Locks,
             Self::Settings,
         ]
     }
@@ -37,6 +41,7 @@ impl ValueEnum for Target {
             Self::Update => PossibleValue::new("update"),
             // The old name still opens the selector.
             Self::Runs => PossibleValue::new("runs").alias("resume"),
+            Self::Locks => PossibleValue::new("locks"),
             Self::Settings => PossibleValue::new("settings"),
         })
     }
@@ -47,12 +52,16 @@ impl Target {
         match self {
             Self::System => Some(Scope::System),
             Self::Home => Some(Scope::Home),
-            Self::Update | Self::Runs | Self::Settings => None,
+            Self::Update | Self::Runs | Self::Locks | Self::Settings => None,
         }
     }
 
     pub fn opens_a_run(self) -> bool {
         self == Self::Runs
+    }
+
+    pub fn opens_locks(self) -> bool {
+        self == Self::Locks
     }
 
     pub fn edits_settings(self) -> bool {
@@ -67,6 +76,7 @@ impl fmt::Display for Target {
             Self::Home => "home",
             Self::Update => "update",
             Self::Runs => "runs",
+            Self::Locks => "locks",
             Self::Settings => "settings",
         })
     }
@@ -77,15 +87,15 @@ impl fmt::Display for Target {
     name = "nix-rebuild",
     version,
     about = "Interactive NixOS and Home Manager rebuild interface",
-    override_usage = "nix-rebuild <system|home|update> [OPTIONS]\n       nix-rebuild runs [<ID>] [--list] [--logs] [--delete | --delete-all]\n       nix-rebuild settings"
+    override_usage = "nix-rebuild <system|home|update> [OPTIONS]\n       nix-rebuild runs [<ID>] [--list] [--logs] [--delete | --delete-all]\n       nix-rebuild locks [<ID>] [--list]\n       nix-rebuild settings"
 )]
 pub struct Cli {
     /// What to run. Not needed to open a recorded run.
     #[arg(value_enum, value_name = "TARGET")]
     pub target: Option<Target>,
 
-    /// The recorded run `runs` opens: `last` for the newest, otherwise an id
-    /// from the list. Without it, `runs` asks which run to open.
+    /// The recorded run `runs` opens, or the kept lock `locks` puts back: `last` for the
+    /// newest, otherwise an id from the list. Without it, both verbs ask which one.
     #[arg(value_name = "ID")]
     pub id: Option<String>,
 
@@ -116,7 +126,7 @@ pub struct Cli {
     #[arg(
         long,
         conflicts_with_all = ["id", "logs"],
-        help = "Print the recorded runs, with their ids, instead of asking which to open"
+        help = "Print the recorded runs or the kept locks, with their ids, instead of asking which to open"
     )]
     pub list: bool,
 
@@ -145,6 +155,10 @@ pub struct Cli {
 impl Cli {
     pub fn opens_a_run(&self) -> bool {
         self.target.is_some_and(Target::opens_a_run)
+    }
+
+    pub fn opens_locks(&self) -> bool {
+        self.target.is_some_and(Target::opens_locks)
     }
 
     pub fn check_run_arguments(&self) -> Result<(), String> {
@@ -193,6 +207,22 @@ impl Cli {
                     "name the run to delete: `nix-rebuild runs <ID> --delete`, or pass --delete-all"
                         .into(),
                 );
+            }
+            return Ok(());
+        }
+        if self.target.is_some_and(Target::opens_locks) {
+            // A rollback rebuilds, so the flags that change a rebuild stay; reading and
+            // deleting belong to the journal.
+            for (given, flag) in [
+                (self.logs, "--logs"),
+                (self.delete, "--delete"),
+                (self.delete_all, "--delete-all"),
+            ] {
+                if given {
+                    return Err(format!(
+                        "{flag} is not valid with `nix-rebuild locks`: a kept lock is rebuilt with, not read or deleted"
+                    ));
+                }
             }
             return Ok(());
         }
@@ -280,6 +310,57 @@ mod tests {
 
         assert!(!Cli::parse_from(["nix-rebuild", "home"]).opens_a_run());
         assert!(!Cli::parse_from(["nix-rebuild", "home", "--list"]).opens_a_run());
+    }
+
+    #[test]
+    fn locks_is_a_verb_that_puts_a_kept_lock_back_and_rebuilds() {
+        use crate::common::cli::{Cli, Target};
+        use clap::Parser;
+
+        let picker = Cli::parse_from(["nix-rebuild", "locks"]);
+        assert_eq!(picker.target, Some(Target::Locks));
+        assert!(picker.opens_locks(), "it puts a lock back and rebuilds");
+        assert_eq!(
+            Target::Locks.scope(),
+            None,
+            "the plan decides the scopes, not the verb"
+        );
+        assert_eq!(picker.id, None, "no id means ask which one");
+
+        let named = Cli::parse_from(["nix-rebuild", "locks", "last"]);
+        assert_eq!(named.id.as_deref(), Some("last"));
+        assert!(named.check_run_arguments().is_ok());
+
+        // It rebuilds, so the flags that change a rebuild are its own.
+        for args in [
+            vec!["nix-rebuild", "locks", "--boot"],
+            vec!["nix-rebuild", "locks", "--yes"],
+            vec!["nix-rebuild", "locks", "--no-clean"],
+            vec!["nix-rebuild", "locks", "--flake", "/repo"],
+            vec!["nix-rebuild", "locks", "--list"],
+        ] {
+            let cli = Cli::parse_from(args.iter().copied());
+            assert!(
+                cli.check_run_arguments().is_ok(),
+                "{args:?} changes a rebuild, so a rollback takes it"
+            );
+        }
+
+        // And nothing of the journal's, which reads and deletes recorded runs.
+        for args in [
+            vec!["nix-rebuild", "locks", "--logs"],
+            vec!["nix-rebuild", "locks", "an-id", "--delete"],
+            vec!["nix-rebuild", "locks", "--delete-all"],
+        ] {
+            let cli = Cli::parse_from(args.iter().copied());
+            assert!(
+                cli.check_run_arguments().is_err(),
+                "{args:?} belongs to `nix-rebuild runs`"
+            );
+        }
+
+        // A listing is the whole answer, so it takes no id.
+        assert!(Cli::try_parse_from(["nix-rebuild", "locks", "--list", "last"]).is_err());
     }
 
     #[test]

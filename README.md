@@ -20,6 +20,7 @@ The guides:
 | [The frame](docs/frame.md) | the alternate screen, the Status, Activity and Logs cards, resizing |
 | [Settings](docs/settings.md) | `config.toml` and the Settings dialog |
 | [Recorded runs](docs/runs.md) | where runs live, their log, pruning and deletion |
+| [Saved locks](docs/locks.md) | the lock an update replaces, and putting one back |
 | [Development](docs/development.md) | the devShell, `nix flake check`, the package, the screenshot |
 
 ## Commands
@@ -29,6 +30,7 @@ nix-rebuild system          # build and switch NixOS
 nix-rebuild system --boot   # register the generation for the next boot
 nix-rebuild home            # build and switch Home Manager
 nix-rebuild update          # refresh the lock file, build both, then activate both
+nix-rebuild locks           # put a saved lock back and rebuild with it
 nix-rebuild runs            # open a recorded run: list, read or delete them
 nix-rebuild settings        # edit the remembered settings without rebuilding
 ```

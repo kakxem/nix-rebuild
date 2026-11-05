@@ -9,6 +9,7 @@
 | `system` | `nixos-rebuild switch --flake <checkout>#<system.config>`, or `boot` with `--boot` |
 | `home` | `home-manager switch --flake <checkout>#<home.config> -b backup-<stamp>-<pid>` |
 | `update` | `nix flake update`, one `nix build`, then the activations of the declared scopes |
+| `locks [<ID>]` | a saved lock file: put it back on the checkout and rebuild with it, or list them |
 | `runs [<ID>]` | a recorded run: open it, list them, print one log, or delete one |
 | `settings` | the Settings dialog alone, with no rebuild |
 
@@ -16,7 +17,8 @@
 teaching two names.
 
 `system` runs the frame elevated and `home` refuses to run as root. `update`
-elevates only the system activation, so the frame stays the user's.
+elevates only the system activation, so the frame stays the user's, and `locks`
+rebuilds the same way.
 
 ## Keys
 

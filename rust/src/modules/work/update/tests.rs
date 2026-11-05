@@ -370,3 +370,37 @@ fn a_machine_without_home_manager_updates_the_same_way() {
         "no Home Manager means no home step, boot included"
     );
 }
+
+#[test]
+fn a_rollback_plans_the_build_and_the_activations_without_refreshing_the_lock() {
+    let tools = ToolPaths::fake();
+    let steps = super::plan_pinned(
+        &tools,
+        "/repo#sample",
+        "/repo#system",
+        "/repo#hb",
+        "/repo#sb",
+        false,
+        HomeManager::Standalone,
+    );
+
+    let labels: Vec<&str> = steps.iter().map(|step| step.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "nix build home and system",
+            "home-manager switch",
+            "nixos-rebuild switch"
+        ],
+        "a kept lock is already pinned, so the queue starts at the build"
+    );
+    assert_eq!(
+        steps[0].scope,
+        Scope::Both,
+        "one build feeds both activations"
+    );
+    assert!(
+        steps[2].elevated.is_some() && steps[1].elevated.is_none(),
+        "only the system activation runs elevated"
+    );
+}

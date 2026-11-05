@@ -21,7 +21,7 @@ use nix_rebuild::modules::locks;
 use nix_rebuild::modules::panels::logs;
 use nix_rebuild::modules::runs::picker;
 use nix_rebuild::modules::runs::records as store;
-use nix_rebuild::modules::work::update;
+use nix_rebuild::modules::work::update::{self, Step};
 
 /// What the elevated frame still needs from the user's session: the clipboard tools
 /// talk to the compositor, and sudo resets the environment.
@@ -65,10 +65,16 @@ fn real_main() -> anyhow::Result<i32> {
         return settings_frame();
     }
 
+    // A listing is a reading, not a rebuild: it needs no checkout, no declaration, no terminal.
+    if cli.opens_locks() && cli.list {
+        terminal::write_stdout(&locks::listing())?;
+        return Ok(0);
+    }
+
     let Some(target) = cli.target else {
         anyhow::bail!(
             "a target is required: `nix-rebuild system`, `nix-rebuild home`, \
-             `nix-rebuild update` or `nix-rebuild runs`"
+             `nix-rebuild update`, `nix-rebuild locks` or `nix-rebuild runs`"
         );
     };
     if target == Target::Home && cli.boot {
@@ -98,6 +104,8 @@ fn real_main() -> anyhow::Result<i32> {
             Some(kind)
         }
         Target::Update => Some(setup::home_manager()?),
+        // A rollback builds and activates exactly what an update does, so it reads the same kind.
+        Target::Locks => Some(setup::home_manager()?),
         Target::Runs | Target::Settings => unreachable!("neither verb names a configuration"),
     };
 
@@ -129,22 +137,34 @@ fn real_main() -> anyhow::Result<i32> {
         system_flake.clone()
     };
 
+    // One shape for the three verbs that build and activate both configurations.
+    let plan_with = |home_manager: HomeManager| Deployment {
+        checkout: &checkout,
+        home_flake: &home_flake,
+        system_flake: &system_flake,
+        home_build: &home_build,
+        system_build: &system_build,
+        home_manager,
+    };
+
     if target == Target::Update {
-        return update(
-            &cli,
-            &settings,
-            &checkout,
-            &home_flake,
-            &system_flake,
-            &home_build,
-            &system_build,
+        let plan = plan_with(
             home_manager
                 .context("an update plans with the kind of Home Manager this machine runs")?,
         );
+        return update(&cli, &settings, &plan);
+    }
+
+    if target == Target::Locks {
+        let plan = plan_with(
+            home_manager
+                .context("a rollback plans with the kind of Home Manager this machine runs")?,
+        );
+        return locks_command(&cli, &settings, &plan);
     }
 
     let Some(scope) = target.scope() else {
-        unreachable!("every target but update is one scope");
+        unreachable!("every target that reaches here is one scope");
     };
 
     if scope == Scope::Home && geteuid().is_root() {
@@ -164,19 +184,30 @@ fn real_main() -> anyhow::Result<i32> {
     runtime::run(&mut app, &command, tools)
 }
 
-/// Refresh the lock file and activate both configurations under one frame.
-/// Takes the sudo credential first: the frame cannot ask for a password.
-#[allow(clippy::too_many_arguments)]
-fn update(
-    cli: &Cli,
-    settings: &Settings,
-    checkout: &str,
-    home_flake: &str,
-    system_flake: &str,
-    home_build: &str,
-    system_build: &str,
+/// What the verbs that build and activate both configurations need to name: the checkout,
+/// both flake references, both build attributes, and how Home Manager is installed.
+#[derive(Clone, Copy)]
+struct Deployment<'a> {
+    checkout: &'a str,
+    home_flake: &'a str,
+    system_flake: &'a str,
+    home_build: &'a str,
+    system_build: &'a str,
     home_manager: HomeManager,
-) -> anyhow::Result<i32> {
+}
+
+/// Refresh the lock file and activate both configurations under one frame.
+/// Keeps the lock it replaces first, and takes the sudo credential before the frame
+/// because the frame cannot ask for a password.
+fn update(cli: &Cli, settings: &Settings, deployment: &Deployment<'_>) -> anyhow::Result<i32> {
+    let Deployment {
+        checkout,
+        home_flake,
+        system_flake,
+        home_build,
+        system_build,
+        home_manager,
+    } = *deployment;
     if geteuid().is_root() {
         anyhow::bail!("update must run as your regular user, not root");
     }
@@ -187,7 +218,6 @@ fn update(
              directory; pass --flake PATH"
         );
     }
-
     // Keep what this update is about to replace, before `nix flake update` touches it.
     let kept = locks::save(checkout, locks::Reason::Update);
     if kept.is_some() {
@@ -195,7 +225,6 @@ fn update(
     }
 
     let tools = tools();
-    let policy = cli.cleanup_policy(settings.cleanup);
     let steps = update::plan(
         &tools,
         checkout,
@@ -206,21 +235,127 @@ fn update(
         cli.boot,
         home_manager,
     );
+    activate(
+        cli,
+        settings,
+        deployment,
+        steps,
+        tools,
+        "update",
+        kept.map(|kept| kept.id),
+    )
+}
 
+/// The `locks` verb: put a kept lock back on the checkout and rebuild with it.
+fn locks_command(
+    cli: &Cli,
+    settings: &Settings,
+    deployment: &Deployment<'_>,
+) -> anyhow::Result<i32> {
+    let id = match cli.id.as_deref() {
+        Some(id) => id.to_owned(),
+        None => {
+            if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                anyhow::bail!(
+                    "the lock selector needs a terminal; `nix-rebuild locks --list` prints the \
+                     saved locks and `nix-rebuild locks <ID>` restores one"
+                );
+            }
+            let saved = locks::list();
+            // Nothing kept yet: the listing says what puts one there, which a frame cannot.
+            if saved.is_empty() {
+                terminal::write_stdout(&locks::listing())?;
+                return Ok(0);
+            }
+            // The selector marks the lock the checkout holds now, so it reads that digest first.
+            let current = locks::current(deployment.checkout);
+            match locks::pick_lock(saved, current)? {
+                Some(id) => id,
+                // Leaving the selector without choosing is not a failed run.
+                None => return Ok(0),
+            }
+        }
+    };
+
+    let lock = locks::meta(&id).ok_or_else(|| {
+        anyhow::anyhow!("no saved lock named `{id}`; `nix-rebuild locks --list` lists them")
+    })?;
+    restore_and_rebuild(cli, settings, deployment, &lock)
+}
+
+/// Put a kept lock back on the checkout and rebuild with the queue it pins. The `locks` verb
+/// and `R` in the run selector share this, so a restored lock always rebuilds the same way.
+fn restore_and_rebuild(
+    cli: &Cli,
+    settings: &Settings,
+    deployment: &Deployment<'_>,
+    lock: &locks::SavedLock,
+) -> anyhow::Result<i32> {
+    if geteuid().is_root() {
+        anyhow::bail!("a rollback must run as your regular user, not root");
+    }
+    // A rollback writes the lock file inside the checkout, so it has to be a directory.
+    let checkout = deployment.checkout;
+    if !Path::new(checkout).is_dir() {
+        anyhow::bail!(
+            "a rollback writes the saved lock into the checkout, so {checkout} must be a \
+             directory; pass --flake PATH"
+        );
+    }
+
+    // The restore keeps the lock it replaces, so this rollback can itself be undone.
+    let restored = locks::restore(&lock.id, checkout)?;
+    locks::prune(settings.keep_locks);
+
+    let tools = tools();
+    let steps = update::plan_pinned(
+        &tools,
+        deployment.home_flake,
+        deployment.system_flake,
+        deployment.home_build,
+        deployment.system_build,
+        cli.boot,
+        deployment.home_manager,
+    );
+    activate(
+        cli,
+        settings,
+        deployment,
+        steps,
+        tools,
+        "rollback",
+        restored.kept,
+    )
+}
+
+/// Take the sudo ticket, then run the steps under one frame. An update and a rollback plan
+/// different queues and share everything after the plan.
+fn activate(
+    cli: &Cli,
+    settings: &Settings,
+    deployment: &Deployment<'_>,
+    steps: Vec<Step>,
+    tools: ToolPaths,
+    verb: &str,
+    kept_lock: Option<String>,
+) -> anyhow::Result<i32> {
     let credential = Command::new("sudo")
         .arg("-v")
         .status()
         .context("ask sudo for a credential")?;
     if !credential.success() {
-        anyhow::bail!("update needs sudo; the credential was not granted");
+        anyhow::bail!("{verb} needs sudo; the credential was not granted");
     }
 
-    let first = steps.first().context("an update has steps")?;
-    let mut app = App::new(first.scope, checkout.into(), cli.boot, policy);
-    app.kept_lock = kept.map(|kept| kept.id);
-    // One update activates both profiles, so its cleanup prunes both; the system
-    // half asks for the sudo ticket taken above, because the frame stays unprivileged.
-    app.cleanup.scope = update::cleanup_scope(home_manager);
+    let policy = cli.cleanup_policy(settings.cleanup);
+    let first = steps.first().context("a run has steps")?;
+    let mut app = App::new(first.scope, deployment.checkout.into(), cli.boot, policy);
+    // The journal names the verb that started this queue and the lock it kept on the way.
+    app.flow = verb.into();
+    app.kept_lock = kept_lock;
+    // One run activates both profiles, so its cleanup prunes both; the system half asks for
+    // the sudo ticket taken above, because the frame stays unprivileged.
+    app.cleanup.scope = update::cleanup_scope(deployment.home_manager);
     // Settings fill the view; explicit flags already won.
     app.apply_settings(settings);
     runtime::run_steps(&mut app, steps, tools)
@@ -239,6 +374,8 @@ fn settings_frame() -> anyhow::Result<i32> {
     runtime::run_settings(&mut app, tools())
 }
 
+/// The `runs` verb. A rollback asked for in the selector comes back as the lock to restore:
+/// it needs the checkout and the declarations, so the caller finishes it.
 fn runs_command(cli: &Cli) -> anyhow::Result<i32> {
     if cli.delete || cli.delete_all {
         return delete_runs(cli);

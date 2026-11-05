@@ -59,12 +59,26 @@ impl Step {
     }
 }
 
-/// Update sequence: lock, one `nix build` for both generations (shared paths
-/// built once), then activate. A NixOS-profile Home Manager activates once.
+/// The lock file's own step, run from inside the checkout so `nix flake update` finds it.
+pub fn lock_step(tools: &ToolPaths, checkout: &str) -> Step {
+    let mut command = vec![tools.nix(), "flake".into(), "update".into()];
+    tools.push_impure(&mut command);
+    Step {
+        label: "nix flake update".into(),
+        scope: Scope::Home,
+        action: "update".into(),
+        command,
+        dir: Some(PathBuf::from(checkout)),
+        elevated: None,
+    }
+}
+
+/// Build both generations, then activate: one `nix build` for the paths both share, and a
+/// NixOS-profile Home Manager activates once. A rollback runs these steps after putting a
+/// kept lock back, so its queue starts at the build and refreshes nothing.
 #[allow(clippy::too_many_arguments)]
-pub fn plan(
+pub fn plan_pinned(
     tools: &ToolPaths,
-    checkout: &str,
     home_flake: &str,
     system_flake: &str,
     home_build: &str,
@@ -74,47 +88,33 @@ pub fn plan(
 ) -> Vec<Step> {
     let standalone = home_manager == HomeManager::Standalone;
 
-    let mut steps = vec![
-        Step {
-            label: "nix flake update".into(),
-            scope: Scope::Home,
-            action: "update".into(),
-            command: {
-                let mut command = vec![tools.nix(), "flake".into(), "update".into()];
-                tools.push_impure(&mut command);
-                command
-            },
-            dir: Some(PathBuf::from(checkout)),
-            elevated: None,
+    // Activations find their generation in the store; `--no-link` avoids
+    // leaving a `result` symlink behind.
+    let mut steps = vec![Step {
+        label: if standalone {
+            "nix build home and system"
+        } else {
+            "nix build system"
+        }
+        .into(),
+        scope: if standalone {
+            Scope::Both
+        } else {
+            Scope::System
         },
-        // Activations find their generation in the store; `--no-link` avoids
-        // leaving a `result` symlink behind.
-        Step {
-            label: if standalone {
-                "nix build home and system"
-            } else {
-                "nix build system"
+        action: "build".into(),
+        command: {
+            let mut command = vec![tools.nix(), "build".into(), "--no-link".into()];
+            if standalone {
+                command.push(home_build.into());
             }
-            .into(),
-            scope: if standalone {
-                Scope::Both
-            } else {
-                Scope::System
-            },
-            action: "build".into(),
-            command: {
-                let mut command = vec![tools.nix(), "build".into(), "--no-link".into()];
-                if standalone {
-                    command.push(home_build.into());
-                }
-                command.push(system_build.into());
-                tools.push_impure(&mut command);
-                command
-            },
-            dir: None,
-            elevated: None,
+            command.push(system_build.into());
+            tools.push_impure(&mut command);
+            command
         },
-    ];
+        dir: None,
+        elevated: None,
+    }];
 
     if standalone {
         steps.push(Step {
@@ -141,6 +141,31 @@ pub fn plan(
         elevated: Some(tools.rebuild_command(Scope::System, system_flake, boot)),
     });
 
+    steps
+}
+
+/// The whole update: refresh the lock from inside the checkout, then build and activate.
+#[allow(clippy::too_many_arguments)]
+pub fn plan(
+    tools: &ToolPaths,
+    checkout: &str,
+    home_flake: &str,
+    system_flake: &str,
+    home_build: &str,
+    system_build: &str,
+    boot: bool,
+    home_manager: HomeManager,
+) -> Vec<Step> {
+    let mut steps = vec![lock_step(tools, checkout)];
+    steps.extend(plan_pinned(
+        tools,
+        home_flake,
+        system_flake,
+        home_build,
+        system_build,
+        boot,
+        home_manager,
+    ));
     steps
 }
 

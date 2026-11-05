@@ -1,8 +1,10 @@
-//! The lock files kept before an update or a rollback replaced them, and the Settings row that
-//! bounds them.
+//! The lock files kept before an update or a rollback replaced them: the store, the selector,
+//! and the Settings row that bounds them.
 
+mod picker;
 mod store;
 
+pub use picker::pick_lock;
 pub use store::{Reason, Restored, SavedLock, current, list, listing, meta, prune, restore, save};
 
 use crate::common::config::SettingEntry;

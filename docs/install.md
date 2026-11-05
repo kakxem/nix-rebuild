@@ -70,6 +70,8 @@ Manager, and an update activates the system alone.
 | `runs <ID> --logs` | print one run's log, for a pipe; with no id, the newest run |
 | `runs <ID> --delete` | delete one recorded run after asking |
 | `runs --delete-all` | delete every recorded run, after the same question |
+| `locks <ID>` | put a saved lock back on the checkout and rebuild with it; `last` is the newest |
+| `locks --list` | print the saved locks with their ids |
 | `settings` | the Settings dialog alone; no run, nothing rebuilt |
 
 ## How the checkout is chosen

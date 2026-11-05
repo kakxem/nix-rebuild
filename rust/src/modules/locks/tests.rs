@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::picker::{PickerStep, Selector};
 use super::store::{self, Reason, SavedLock};
 
 /// `XDG_STATE_HOME` is process-wide, so the tests that move it take turns.
@@ -203,6 +204,120 @@ fn pruning_keeps_the_newest_and_never_empties_the_store() {
 }
 
 #[test]
+fn the_selector_opens_the_lock_under_the_mark_once_the_question_is_answered() {
+    let mut selector = Selector::new(vec![saved("a"), saved("b"), saved("c")], None);
+    let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+    // Enter asks; the lock goes back on `y`, and nothing is written before that.
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(
+        selector.asking(),
+        Some(0),
+        "the mark is what Enter asks about"
+    );
+    assert_eq!(
+        selector.press(press(KeyCode::Char('y'))),
+        PickerStep::Open("a".into())
+    );
+    assert_eq!(
+        selector.asking(),
+        None,
+        "the question is answered, not left open"
+    );
+
+    // Esc and `n` keep the current lock, and Enter confirms the way `y` does.
+    assert_eq!(selector.press(press(KeyCode::Down)), PickerStep::Continue);
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(selector.press(press(KeyCode::Esc)), PickerStep::Continue);
+    assert_eq!(
+        selector.asking(),
+        None,
+        "Esc drops the question, not the selector"
+    );
+    assert_eq!(selector.press(press(KeyCode::Down)), PickerStep::Continue);
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(
+        selector.press(press(KeyCode::Char('n'))),
+        PickerStep::Continue
+    );
+    assert_eq!(selector.asking(), None);
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(
+        selector.press(press(KeyCode::Enter)),
+        PickerStep::Open("c".into())
+    );
+
+    assert_eq!(
+        selector.press(press(KeyCode::Down)),
+        PickerStep::Continue,
+        "the mark stops at the last row"
+    );
+    assert_eq!(selector.press(press(KeyCode::Home)), PickerStep::Continue);
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(
+        selector.press(press(KeyCode::Char('Y'))),
+        PickerStep::Open("a".into())
+    );
+
+    // The arrows do not move the mark while the question is open.
+    assert_eq!(selector.press(press(KeyCode::Enter)), PickerStep::Continue);
+    assert_eq!(selector.press(press(KeyCode::Down)), PickerStep::Continue);
+    assert_eq!(selector.selected(), 0, "the question freezes the list");
+    assert_eq!(selector.press(press(KeyCode::Esc)), PickerStep::Continue);
+
+    assert_eq!(selector.press(press(KeyCode::Esc)), PickerStep::Leave);
+    assert_eq!(selector.press(press(KeyCode::Char('q'))), PickerStep::Leave);
+
+    let mut empty = Selector::new(Vec::new(), None);
+    assert_eq!(
+        empty.press(press(KeyCode::Enter)),
+        PickerStep::Leave,
+        "Enter with nothing kept leaves instead of opening nothing"
+    );
+}
+
+#[test]
+fn the_selector_draws_one_row_per_lock_with_the_marked_one_first() {
+    use super::picker::picker_to_string;
+
+    let screen = picker_to_string(
+        &[saved("20261029-134201-1a2b"), saved("20261028-101010-2b3c")],
+        0,
+        None,
+        100,
+        12,
+    );
+    let rows: Vec<&str> = screen.lines().collect();
+
+    assert!(
+        screen.contains("Saved locks"),
+        "the frame names itself:\n{screen}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("WHEN") && row.contains("REASON")),
+        "the heading names the columns:\n{screen}"
+    );
+    let marked = rows
+        .iter()
+        .find(|row| row.contains('❯'))
+        .unwrap_or_else(|| panic!("no marked row:\n{screen}"));
+    assert!(
+        marked.contains("20261029-134201-1a2b"),
+        "the first lock is the one under the mark:\n{screen}"
+    );
+    assert_eq!(
+        rows.iter().filter(|row| row.contains("202610")).count(),
+        2,
+        "one row per kept lock:\n{screen}"
+    );
+    assert!(
+        screen.lines().all(|line| line.chars().count() <= 100),
+        "every drawn line fits the width it was given:\n{screen}"
+    );
+}
+
+#[test]
 fn the_settings_row_bounds_the_kept_locks() {
     use crate::common::config::Settings;
 
@@ -218,4 +333,233 @@ fn the_settings_row_bounds_the_kept_locks() {
     settings.keep_locks = 1;
     rows[0].apply(&mut settings, -1);
     assert_eq!(settings.keep_locks, 1, "the row cannot go below one");
+}
+
+#[test]
+fn a_click_opens_the_lock_it_lands_on_and_the_wheel_moves_the_mark() {
+    use super::picker::{PickerGeometry, lock_mouse};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let mut selector = Selector::new(vec![saved("a"), saved("b"), saved("c")], None);
+    let geometry = PickerGeometry {
+        first_row: 4,
+        rows: 3,
+        offset: 0,
+        total: 3,
+        confirm: None,
+    };
+
+    assert_eq!(geometry.row_at(3), None, "the heading is not a row");
+    assert_eq!(geometry.row_at(4), Some(0));
+    assert_eq!(geometry.row_at(6), Some(2));
+    assert_eq!(
+        geometry.row_at(7),
+        None,
+        "the blank below the rows is not one"
+    );
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 10,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        lock_mouse(&mut selector, &geometry, click),
+        PickerStep::Continue,
+        "a click asks, the same as Enter under the mark"
+    );
+    assert_eq!(
+        selector.asking(),
+        Some(1),
+        "the clicked row is the one asked about"
+    );
+    // The pointer is cold while the question is open, so a stray click cannot answer it.
+    assert_eq!(
+        lock_mouse(&mut selector, &geometry, click),
+        PickerStep::Continue
+    );
+    assert_eq!(
+        selector.asking(),
+        Some(1),
+        "the question survives the click"
+    );
+    let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    assert_eq!(
+        selector.press(press(KeyCode::Char('y'))),
+        PickerStep::Open("b".into()),
+        "the click then `y` puts the lock under the pointer back"
+    );
+
+    selector.mark_row(0);
+    let wheel = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        ..click
+    };
+    assert_eq!(
+        lock_mouse(&mut selector, &geometry, wheel),
+        PickerStep::Continue
+    );
+    assert_eq!(
+        selector.selected(),
+        2,
+        "the wheel moves three rows and stops"
+    );
+}
+
+#[test]
+fn the_lock_the_checkout_holds_is_marked_and_named() {
+    use super::picker::picker_to_string;
+
+    let mut first = saved("a");
+    first.digest = "9382a635aaaaaaaa".into();
+    let mut second = saved("b");
+    second.digest = "41f1002ebbbbbbbb".into();
+    let locks = [first, second.clone()];
+
+    // `b` is what the checkout holds: its row carries the bullet and the card above says which.
+    let screen = picker_to_string(&locks, 0, Some(&second.digest), 100, 14);
+    let rows: Vec<&str> = screen.lines().collect();
+    assert!(
+        screen.contains("41f1002e  ·  the lock kept by the update of"),
+        "the state card names the digest and which kept lock it is\ngot\n{screen}"
+    );
+    assert!(
+        screen.contains("\u{256d}\u{2500} Now "),
+        "and it is a card of its own, titled like the rebuild's\ngot\n{screen}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains('\u{2022}') && row.contains("41f1002e")),
+        "the row holding that digest is marked\ngot\n{screen}"
+    );
+    assert!(
+        rows.iter()
+            .filter(|row| row.contains('\u{2022}'))
+            .all(|row| row.contains("41f1002e")),
+        "and only that one\ngot\n{screen}"
+    );
+
+    // When nothing kept matches, the card says so instead of pointing at a row that is not there.
+    let screen = picker_to_string(&locks, 0, Some("ffffffffffffffff"), 100, 14);
+    assert!(
+        screen.contains("ffffffff  ·  no saved lock holds it"),
+        "got\n{screen}"
+    );
+    assert!(
+        !screen.contains('\u{2022}'),
+        "no row is marked\ngot\n{screen}"
+    );
+
+    // A checkout with no lock to read still says where it stands.
+    let screen = picker_to_string(&locks, 0, None, 100, 14);
+    assert!(screen.contains("no flake.lock to read"), "got\n{screen}");
+}
+
+#[test]
+fn the_question_says_which_digest_leaves_and_which_arrives() {
+    use super::picker::picker_to_question_string;
+
+    let mut chosen = saved("a");
+    chosen.digest = "9382a635aaaaaaaa".into();
+    let mut held = saved("b");
+    held.digest = "41f1002ebbbbbbbb".into();
+    let locks = [chosen.clone(), held.clone()];
+
+    let screen = picker_to_question_string(&locks, 0, Some(&held.digest), 100, 16);
+    assert!(screen.contains("Revert the lock of"), "got\n{screen}");
+    assert!(
+        screen.contains("41f1002e → 9382a635"),
+        "the question names both ends of the move\ngot\n{screen}"
+    );
+    assert!(
+        screen.contains("[Y  Revert and rebuild]"),
+        "the same answers `runs` gives for the same move: the two boxes are one\ngot\n{screen}"
+    );
+    assert!(
+        screen.contains("[N  Keep the lock]"),
+        "the answer that writes nothing is a chip, not a hint\ngot\n{screen}"
+    );
+    assert!(
+        screen.contains("[Esc]"),
+        "the corner is the way out, so the box needs no legend\ngot\n{screen}"
+    );
+    assert!(
+        !screen.contains("rebuilt on those inputs"),
+        "the button already says what happens\ngot\n{screen}"
+    );
+    assert!(
+        !screen.contains("can be undone"),
+        "the box says the question, not what the store keeps\ngot\n{screen}"
+    );
+    assert!(
+        screen.contains("╭ Rollback "),
+        "the same box the rollback in `runs` draws\ngot\n{screen}"
+    );
+
+    // Choosing the lock that is already there is a rebuild that changes nothing, and says so.
+    let screen = picker_to_question_string(&locks, 0, Some(&chosen.digest), 100, 16);
+    assert!(
+        screen.contains("9382a635 is already what the checkout holds."),
+        "got\n{screen}"
+    );
+}
+
+#[test]
+fn the_questions_answers_take_a_click_like_a_key() {
+    use super::picker::{lock_mouse, picker_to_question_geometry};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let locks = [saved("a"), saved("b")];
+    let geometry = picker_to_question_geometry(&locks, 1, None, 100, 20);
+    let answers = geometry.confirm.expect("the question drew its answers");
+    let click = |column: u16, row: u16| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    // The second row is the mark, and Enter is what puts the question up.
+    let ask = |selector: &mut Selector| {
+        selector.press(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            selector.press(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            PickerStep::Continue
+        );
+        assert_eq!(selector.asking(), Some(1));
+    };
+
+    // `[N]` keeps the lock the checkout holds, which is the answer Esc gives.
+    let mut selector = Selector::new(locks.to_vec(), None);
+    ask(&mut selector);
+    assert_eq!(
+        lock_mouse(&mut selector, &geometry, click(answers.no.0, answers.no.1)),
+        PickerStep::Continue
+    );
+    assert!(
+        selector.asking().is_none(),
+        "the chip puts the question down"
+    );
+
+    // `[Y]` puts the marked lock back and hands its id to the run.
+    ask(&mut selector);
+    assert_eq!(
+        lock_mouse(
+            &mut selector,
+            &geometry,
+            click(answers.yes.0, answers.yes.1)
+        ),
+        PickerStep::Open("b".into())
+    );
+
+    // A click anywhere else, the list behind it included, answers nothing.
+    ask(&mut selector);
+    assert_eq!(
+        lock_mouse(&mut selector, &geometry, click(2, 6)),
+        PickerStep::Continue
+    );
+    assert!(
+        selector.asking().is_some(),
+        "a stray click leaves the question up"
+    );
 }
