@@ -57,8 +57,14 @@ fn real_main() -> anyhow::Result<i32> {
     let cli = Cli::parse();
     cli.check_run_arguments().map_err(anyhow::Error::msg)?;
 
+    // The run selector can hand back a rollback: that one reads the checkout and the
+    // declarations a rebuild needs, so it falls through to them instead of returning.
+    let mut restore_lock: Option<String> = None;
     if cli.opens_a_run() {
-        return runs_command(&cli);
+        restore_lock = runs_command(&cli)?;
+        if restore_lock.is_none() {
+            return Ok(0);
+        }
     }
 
     if cli.target.is_some_and(Target::edits_settings) {
@@ -83,7 +89,21 @@ fn real_main() -> anyhow::Result<i32> {
     // Read after the arguments are known: a bare invocation must not write a settings file.
     let settings = Settings::load();
 
-    let Some(checkout) = cli.checkout(settings.checkout.as_deref()) else {
+    // A rollback from the run selector names its own checkout: the lock was kept for it.
+    let restore = match &restore_lock {
+        Some(id) => Some(locks::meta(id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "the lock that run kept is no longer stored; `nix-rebuild locks --list` \
+                 lists the ones that are"
+            )
+        })?),
+        None => None,
+    };
+    let named = restore
+        .as_ref()
+        .map(|lock| lock.checkout.as_str())
+        .or(settings.checkout.as_deref());
+    let Some(checkout) = cli.checkout(named) else {
         anyhow::bail!(
             "no checkout is configured: declare `checkout` in the nix-rebuild module, set \
              FLAKE_PATH, or pass --flake PATH"
@@ -106,7 +126,9 @@ fn real_main() -> anyhow::Result<i32> {
         Target::Update => Some(setup::home_manager()?),
         // A rollback builds and activates exactly what an update does, so it reads the same kind.
         Target::Locks => Some(setup::home_manager()?),
-        Target::Runs | Target::Settings => unreachable!("neither verb names a configuration"),
+        // Only a rollback from the selector gets this far; a plain `runs` left above.
+        Target::Runs => Some(setup::home_manager()?),
+        Target::Settings => unreachable!("settings names no configuration"),
     };
 
     let system_flake = system_config
@@ -161,6 +183,14 @@ fn real_main() -> anyhow::Result<i32> {
                 .context("a rollback plans with the kind of Home Manager this machine runs")?,
         );
         return locks_command(&cli, &settings, &plan);
+    }
+
+    if let Some(lock) = &restore {
+        let plan = plan_with(
+            home_manager
+                .context("a rollback plans with the kind of Home Manager this machine runs")?,
+        );
+        return restore_and_rebuild(&cli, &settings, &plan, lock);
     }
 
     let Some(scope) = target.scope() else {
@@ -376,20 +406,23 @@ fn settings_frame() -> anyhow::Result<i32> {
 
 /// The `runs` verb. A rollback asked for in the selector comes back as the lock to restore:
 /// it needs the checkout and the declarations, so the caller finishes it.
-fn runs_command(cli: &Cli) -> anyhow::Result<i32> {
+fn runs_command(cli: &Cli) -> anyhow::Result<Option<String>> {
     if cli.delete || cli.delete_all {
-        return delete_runs(cli);
+        delete_runs(cli)?;
+        return Ok(None);
     }
     if cli.list {
         terminal::write_stdout(&store::listing())?;
-        return Ok(0);
+        return Ok(None);
     }
     if cli.logs {
         // `--logs` never takes the screen; no id means the newest run.
-        return print_run_log(cli.id.as_deref().unwrap_or("last"));
+        print_run_log(cli.id.as_deref().unwrap_or("last"))?;
+        return Ok(None);
     }
     if let Some(id) = cli.id.as_deref() {
-        return open_run(id);
+        open_run(id)?;
+        return Ok(None);
     }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         anyhow::bail!(
@@ -401,12 +434,17 @@ fn runs_command(cli: &Cli) -> anyhow::Result<i32> {
     // Nothing recorded: show the listing instead of a frame.
     if runs.is_empty() {
         terminal::write_stdout(&store::listing())?;
-        return Ok(0);
+        return Ok(None);
     }
     match picker::pick_run(runs)? {
-        Some(id) => open_run(&id),
+        Some(picker::Pick::Open(id)) => {
+            open_run(&id)?;
+            Ok(None)
+        }
+        // The reader confirmed it wants the lock that run replaced put back.
+        Some(picker::Pick::Rollback(lock)) => Ok(Some(lock)),
         // Leaving the selector without choosing is not a failed run.
-        None => Ok(0),
+        None => Ok(None),
     }
 }
 

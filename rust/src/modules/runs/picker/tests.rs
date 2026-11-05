@@ -185,37 +185,43 @@ fn the_selector_lists_the_recorded_runs_and_marks_the_chosen_one() {
         "the status sentence is left to the run's own frame:\n{screen}"
     );
 
-    // Row order: the frame border, a blank row, the headings, then the runs.
+    // Row order: the state card, then the list card's border, its air, its headings, then the runs.
     let lines: Vec<&str> = screen.lines().collect();
-    let border = lines[0];
-    assert!(border.starts_with('╭'), "the frame is the first row");
     assert!(
-        !lines[1].chars().any(|cell| cell.is_alphanumeric()),
-        "a blank row under the frame:\n{screen}"
+        lines[0].starts_with("╭─ Now "),
+        "the state card is the first row:\n{screen}"
     );
     assert!(
-        lines[2].contains("WHEN"),
+        lines[3].starts_with("╭─ Recorded runs "),
+        "the list is a card of its own under it:\n{screen}"
+    );
+    assert!(
+        lines[4].chars().all(|c| matches!(c, '│' | ' ')),
+        "one row of air separates the border from the headings:\n{screen}"
+    );
+    assert!(
+        lines[5].contains("WHEN"),
         "the headings come next:\n{screen}"
     );
     assert!(
-        lines[3].contains("20261013-214512-1a2b"),
+        lines[6].contains("20261013-214512-1a2b"),
         "and then the first run:\n{screen}"
     );
 
     // A row, a heading and a chip must be reachable in the geometry the pointer is matched against.
-    assert_eq!(geometry.title_row, 0);
-    assert_eq!(geometry.header_row, 2);
-    assert_eq!(geometry.first_row, 3);
-    assert_eq!(geometry.row_at(3), Some(0));
-    assert_eq!(geometry.row_at(4), Some(1));
-    assert_eq!(geometry.row_at(2), None, "the heading row is not a run");
-    assert_eq!(geometry.row_at(5), None, "nor is the blank space below");
+    assert_eq!(geometry.title_row, 3, "the legend rides the list's border");
+    assert_eq!(geometry.header_row, 5);
+    assert_eq!(geometry.first_row, 6);
+    assert_eq!(geometry.row_at(6), Some(0));
+    assert_eq!(geometry.row_at(7), Some(1));
+    assert_eq!(geometry.row_at(5), None, "the heading row is not a run");
+    assert_eq!(geometry.row_at(8), None, "nor is the blank space below");
     assert_eq!(
-        geometry.column_at(geometry.columns[0].0, 2),
+        geometry.column_at(geometry.columns[0].0, 5),
         Some(crate::common::records::Column::When),
         "the first column's own range names it"
     );
-    assert_eq!(geometry.column_at(3, 3), None, "only the heading row sorts");
+    assert_eq!(geometry.column_at(3, 5), None, "only the heading row sorts");
 
     // While the search is open the title carries the query and the keys change.
     let (searching, searching_geometry) =
@@ -229,7 +235,7 @@ fn the_selector_lists_the_recorded_runs_and_marks_the_chosen_one() {
         "so are its keys:\n{searching}"
     );
     assert!(
-        searching_geometry.chip_at(100, 0).is_some(),
+        searching_geometry.chip_at(100, 3).is_some(),
         "a chip is where the title drew it"
     );
 }
@@ -249,7 +255,7 @@ fn the_selector_scrolls_to_keep_the_chosen_run_in_view() {
     let rows: Vec<&crate::common::records::Meta> = runs.iter().collect();
 
     // A frame too short for the list scrolls the first run off and keeps the chosen one.
-    let (screen, _) = super::picker_to_string(&rows, rows.len() - 1, "", false, None, 120, 8);
+    let (screen, _) = super::picker_to_string(&rows, rows.len() - 1, "", false, None, 120, 10);
     assert!(
         screen.contains("20261020-120000-abc19"),
         "the chosen run stays in view:\n{screen}"
@@ -259,7 +265,7 @@ fn the_selector_scrolls_to_keep_the_chosen_run_in_view() {
         "the list scrolled past the top:\n{screen}"
     );
 
-    let (top, _) = super::picker_to_string(&rows[..2], 0, "", false, None, 120, 8);
+    let (top, _) = super::picker_to_string(&rows[..2], 0, "", false, None, 120, 10);
     assert!(top.contains("20261001-120000-abc0"));
 }
 
@@ -594,4 +600,253 @@ fn the_pointer_does_what_the_keys_do_in_the_selector() {
         PickerStep::Continue
     );
     assert_eq!(selector.selected(), 0);
+}
+
+#[test]
+fn only_a_run_that_kept_a_lock_asks_before_it_is_put_back() {
+    use super::{PickerStep, Selector};
+
+    let mut kept = run_meta("20261029-131900-aaaaa", "system", Some(0), "ok");
+    kept.kept = Some("20261029-131845-bbbb1".into());
+    let mut plain = run_meta("20261028-090000-ccccc", "home", Some(0), "ok");
+    plain.kept = None;
+    let mut selector = Selector::new(vec![kept, plain]);
+    let press =
+        |selector: &mut Selector, code| selector.press(KeyEvent::new(code, KeyModifiers::NONE));
+
+    // A run that kept nothing has nothing to put back, so the key is not an answer there.
+    press(&mut selector, KeyCode::Down);
+    assert!(!selector.can_roll_back());
+    assert_eq!(
+        press(&mut selector, KeyCode::Char('r')),
+        PickerStep::Continue
+    );
+    assert!(
+        selector.confirming().is_none(),
+        "no question without a lock"
+    );
+
+    // The one that kept a lock asks first, and Esc keeps the current lock.
+    press(&mut selector, KeyCode::Up);
+    assert!(selector.can_roll_back());
+    assert_eq!(
+        press(&mut selector, KeyCode::Char('R')),
+        PickerStep::Continue
+    );
+    assert_eq!(
+        selector.confirming().map(|meta| meta.id.as_str()),
+        Some("20261029-131900-aaaaa"),
+        "the question names the run under the mark"
+    );
+    assert_eq!(press(&mut selector, KeyCode::Esc), PickerStep::Continue);
+    assert!(selector.confirming().is_none(), "Esc says no");
+
+    // While the question is up the list does not move under it.
+    press(&mut selector, KeyCode::Char('r'));
+    assert_eq!(press(&mut selector, KeyCode::Down), PickerStep::Continue);
+    assert_eq!(selector.selected(), 0, "the question owns the keys");
+    assert_eq!(
+        press(&mut selector, KeyCode::Char('n')),
+        PickerStep::Continue
+    );
+    assert!(selector.confirming().is_none(), "n says no too");
+
+    // `y` confirms and hands back the lock that run kept.
+    press(&mut selector, KeyCode::Char('r'));
+    assert_eq!(
+        press(&mut selector, KeyCode::Char('y')),
+        PickerStep::Rollback("20261029-131845-bbbb1".into())
+    );
+    assert!(selector.confirming().is_none(), "the question is put down");
+
+    // Enter answers it as yes, the same way it opens the marked run otherwise.
+    press(&mut selector, KeyCode::Char('r'));
+    assert_eq!(
+        press(&mut selector, KeyCode::Enter),
+        PickerStep::Rollback("20261029-131845-bbbb1".into())
+    );
+}
+
+#[test]
+fn the_roll_back_key_rides_the_title_and_falls_back_to_the_footer() {
+    use super::{PickerChip, picker_to_confirm_geometry, picker_to_string};
+
+    let mut kept = run_meta("20261029-131900-aaaaa", "system", Some(0), "ok");
+    kept.kept = Some("20261029-131845-bbbb1".into());
+    let plain = run_meta("20261028-090000-ccccc", "home", Some(0), "ok");
+
+    // A wide title carries `R` with the other keys, and the footer keeps its blank row.
+    let (wide, geometry) = picker_to_string(&[&kept], 0, "", false, None, 100, 12);
+    assert!(wide.contains("[R  Revert]"), "got\n{wide}");
+    let chip = geometry
+        .chips
+        .iter()
+        .find(|(chip, _, _)| *chip == PickerChip::Rollback)
+        .expect("the title carries R");
+    assert_eq!(
+        geometry.chip_at(chip.1 + 1, geometry.title_row),
+        Some(PickerChip::Rollback)
+    );
+    assert!(
+        geometry.rollback.is_none(),
+        "the footer has nothing left to say"
+    );
+    assert!(!wide.contains("Revert this run's lock"), "got\n{wide}");
+
+    // A narrow one cannot hold five chips, so the footer carries the key instead.
+    let (narrow, geometry) = picker_to_string(&[&kept], 0, "", false, None, 80, 12);
+    assert!(!narrow.contains("[R  Revert]"), "got\n{narrow}");
+    let (row, start, _) = geometry.rollback.expect("the hint was drawn");
+    assert_eq!(geometry.chip_at(start + 1, row), Some(PickerChip::Rollback));
+    assert!(narrow.contains("Revert this run's lock"), "got\n{narrow}");
+
+    // A run that kept no lock has no key at all.
+    let (without, geometry) = picker_to_string(&[&plain], 0, "", false, None, 100, 12);
+    assert!(!without.contains("Revert"), "got\n{without}");
+    assert!(
+        geometry.rollback.is_none(),
+        "no hint where the key would do nothing"
+    );
+
+    // The question names the move: the lock the run built with leaves, the kept one arrives.
+    let mut built = kept.clone();
+    built.lock = "7d67a5a8c0ffee00".into();
+    let (question, _) = picker_to_confirm_geometry(&[&built], 0, Some("9382a635aaaaaaaa"), 100, 20);
+    assert!(
+        question.contains("Revert the lock the run of"),
+        "got\n{question}"
+    );
+    assert!(
+        question.contains("7d67a5a8 → 9382a635"),
+        "the box names both ends of the move\ngot\n{question}"
+    );
+    assert!(
+        question.contains("[Y  Revert and rebuild]"),
+        "got\n{question}"
+    );
+    assert!(
+        !question.contains("can be undone"),
+        "the box says the question, not what the store keeps\ngot\n{question}"
+    );
+    assert!(
+        question.contains("╭ Rollback "),
+        "the same title the locks selector uses\ngot\n{question}"
+    );
+    assert!(
+        !question.contains("You land on the state"),
+        "the box says only what the row cannot\ngot\n{question}"
+    );
+
+    // A run with no digest of its own that kept a lock is still one move, and says so.
+    let (arrow, _) = picker_to_confirm_geometry(&[&kept], 0, Some("9382a635aaaaaaaa"), 100, 20);
+    assert!(arrow.contains("→ 9382a635"), "got\n{arrow}");
+
+    // The list stays readable around the box: a row above it still shows its id.
+    let (question, _) = picker_to_confirm_geometry(&[&kept, &plain], 0, None, 100, 26);
+    assert!(
+        question.contains("20261029-131900-aaaaa"),
+        "got\n{question}"
+    );
+}
+
+#[test]
+fn the_roll_back_chips_take_a_click_like_a_key() {
+    use super::{PickerStep, Selector, picker_mouse, picker_to_confirm_geometry};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let mut kept = run_meta("20261029-131900-aaaaa", "system", Some(0), "ok");
+    kept.kept = Some("20261029-131845-bbbb1".into());
+    let (_, geometry) = picker_to_confirm_geometry(&[&kept], 0, None, 100, 20);
+    let answers = geometry.confirm.expect("the question drew its answers");
+    let click = |column: u16, row: u16| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    let mut selector = Selector::new(vec![kept]);
+    let ask = |selector: &mut Selector| {
+        assert_eq!(
+            selector.press(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            PickerStep::Continue
+        );
+        assert!(selector.confirming().is_some(), "R asks first");
+    };
+
+    // `[N]` puts the question down, and `[Y]` hands back the lock the run kept.
+    ask(&mut selector);
+    assert_eq!(
+        picker_mouse(&mut selector, &geometry, click(answers.no.0, answers.no.1)),
+        PickerStep::Continue
+    );
+    assert!(selector.confirming().is_none(), "the chip says no");
+    ask(&mut selector);
+    assert_eq!(
+        picker_mouse(
+            &mut selector,
+            &geometry,
+            click(answers.yes.0, answers.yes.1)
+        ),
+        PickerStep::Rollback("20261029-131845-bbbb1".into())
+    );
+
+    // The list behind the box takes no click while the question is up.
+    ask(&mut selector);
+    assert_eq!(
+        picker_mouse(&mut selector, &geometry, click(2, 4)),
+        PickerStep::Continue
+    );
+    assert!(
+        selector.confirming().is_some(),
+        "a stray click answers nothing"
+    );
+}
+
+#[test]
+fn the_title_keeps_its_words_on_a_narrow_terminal() {
+    use super::picker_to_string;
+
+    let kept = run_meta("20261029-131900-aaaaa", "system", Some(0), "ok");
+    let (screen, _) = picker_to_string(&[&kept], 0, "", false, None, 80, 10);
+    // The legend is right-aligned over the title: five chips would run into the words.
+    assert!(screen.contains("Recorded runs ─"), "got\n{screen}");
+    assert!(screen.contains("[Esc  Leave]"), "got\n{screen}");
+}
+
+#[test]
+fn the_run_that_built_what_the_checkout_holds_is_marked() {
+    use super::view::picker_to_string_now;
+
+    let mut built = run_meta("20261031-215800-4bc64", "system", Some(0), "ok");
+    built.lock = "64c10c1daaaaaaaa".into();
+    let mut older = run_meta("20261029-124000-4bc29", "system", Some(0), "ok");
+    older.lock = "9382a635bbbbbbbb".into();
+    let runs: Vec<&crate::common::records::Meta> = vec![&built, &older];
+
+    // The digest the checkout holds now names one row, and the card above the list names it too.
+    // The mark sits on the other row, so the bullet has to be what marks the current one.
+    let screen = picker_to_string_now(&runs, 1, &built.lock, 130, 16);
+    let rows: Vec<&str> = screen.lines().collect();
+    assert!(
+        screen.contains("64c10c1d  ·"),
+        "the state card names the digest\ngot\n{screen}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains('\u{2022}') && row.contains("20261031-215800-4bc64")),
+        "the run that built it is marked\ngot\n{screen}"
+    );
+    assert!(
+        rows.iter().filter(|row| row.contains('\u{2022}')).count() == 1,
+        "and only that one\ngot\n{screen}"
+    );
+
+    // A checkout that has moved past every recorded run marks nothing and still says where it is.
+    let screen = picker_to_string_now(&runs, 1, "ffffffffffffffff", 130, 16);
+    assert!(screen.contains("ffffffff"), "got\n{screen}");
+    assert!(
+        !screen.contains('\u{2022}'),
+        "no row is marked\ngot\n{screen}"
+    );
 }

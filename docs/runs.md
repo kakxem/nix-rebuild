@@ -41,13 +41,38 @@ The lock column is the digest of the `flake.lock` the run built with, read when 
 run finished: an update has already moved the file by then, so the value is of the
 inputs the build used, not the ones it replaced. Two runs with the same inputs show
 the same eight characters, which is how a `home` or `system` switch can be matched to
-the update that pinned it, and `runs <ID> --logs` prints the whole digest. It is an
-FNV-1a digest of the file, not a checksum to compare with `sha256`. A flake reference
-that is not a local path has no file to read, so its column stays empty.
+the update that pinned it; `locks --list` carries the same value for a kept lock, and
+`runs <ID> --logs` prints the whole digest. It is an FNV-1a digest of the file, not a
+checksum to compare with `sha256`. A flake reference that is not a local path has no
+file to read, so its column stays empty.
 
 `runs <ID>` opens that run directly, and `last` names the newest one.
 `runs --list` prints the same table to stdout and `runs <ID> --logs` prints one
 run's log, which is what a pipe or a bug report wants.
+
+## Putting back what a run replaced
+
+An `update` records the lock file it kept, and a `rollback` records the one it
+replaced, so a rollback is itself reversible. On a row that carries one, the title
+shows `[R  Revert]` beside the other keys (on a terminal too narrow for five chips
+the hint under the list says it instead, and it is a click too). `R` asks first,
+because the checkout's `flake.lock` is overwritten; the question is the same
+`Rollback` box `nix-rebuild locks` draws. `[Y  Revert and rebuild]` (`y`) writes the
+kept lock back and rebuilds both configurations; `[N  Keep the lock]` (`n` or `Esc`)
+keeps the current one. What runs is what `nix-rebuild locks <ID>` runs: one
+`nix build` and the activations, with no `nix flake update`.
+
+The `Now` card above the list carries the digest of the `flake.lock` the checkout
+holds right now and the run that built with it; that row carries a `•` in place of the
+mark. A digest no recorded run has seen leaves every row unmarked.
+
+`R` is pressed on the run you want to undo, which is the one you just ran: `R` on the
+third of three updates lands on the inputs of the second.
+
+A rollback keeps the lock it replaces, so its own row carries one and `R` on it goes
+forward again, back to the inputs the rollback overwrote. A run whose lock has been
+pruned says so instead of rebuilding, and only `nix-rebuild update` runs
+`nix flake update`.
 
 A run is recorded only through the frame, so a switch started from a script, a
 systemd unit or CI leaves nothing behind.

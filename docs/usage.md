@@ -39,11 +39,15 @@ rebuilds the same way.
 | `Enter` | close a finished run, or act on the selected row in a dialog |
 | `F2` | release the mouse, so text can be selected |
 
-In the run picker the arrows move, `Enter` opens a run, `/` searches the columns
-and `Esc` (or `q`) leaves. In the Settings dialog `↑` `↓` (or `j` `k`) move,
-`Home` and `End` jump to the ends, and `←` `→` (`Enter`, `Space`) change the
-selected row. `nix-rebuild settings` is that dialog in a frame of its own, so
-closing it closes the frame: there is nothing behind it.
+In the run picker the arrows move, `Enter` opens a run, `R` reverts the lock that
+run replaced (it asks first, because the checkout's `flake.lock` is overwritten, and
+it lands on the state the run before it left), `/` searches the columns and `Esc`
+(or `q`) leaves. In the lock picker the arrows move, `Enter` (or a click
+on the row) puts that lock back and rebuilds, and `Esc` (or `q`) leaves; there is
+no search, because the list holds at most twenty rows. In the Settings dialog `↑`
+`↓` (or `j` `k`) move, `Home` and `End` jump to the ends, and `←` `→` (`Enter`,
+`Space`) change the selected row. `nix-rebuild settings` is that dialog in a frame
+of its own, so closing it closes the frame: there is nothing behind it.
 
 `D` opens one dialog with the run's own facts: the id it is recorded under (or
 "not recorded"), the flake, whether the tree was dirty, the action, the cleanup

@@ -5,12 +5,13 @@
 mod state;
 mod view;
 
-pub use state::{PickerStep, Selector, pick_run, picker_mouse};
-#[cfg(test)]
-pub use view::picker_to_string;
+pub use state::{Pick, PickerStep, Selector, pick_run, picker_mouse};
 pub use view::{
-    PICKER_CHIPS, PICKER_MARKER, PICKER_SEARCH_CHIPS, PickerChip, PickerGeometry, render_picker,
+    PICKER_CHIPS, PICKER_MARKER, PICKER_SEARCH_CHIPS, PickerChip, PickerGeometry, render_confirm,
+    render_picker,
 };
+#[cfg(test)]
+pub use view::{picker_to_confirm_geometry, picker_to_string};
 
 #[cfg(test)]
 mod tests;
