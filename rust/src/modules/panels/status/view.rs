@@ -5,19 +5,17 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::common::actions::Command;
+use crate::common::dialog::{self, Answers, Dialog};
 use crate::common::hit_targets::{Click, ClickMap, Hover};
 use crate::common::layout::centered_rect;
 use crate::common::phase::Phase;
 use crate::common::text::{clip_line, format_clock};
 use crate::common::theme::{CYAN, GREEN, MUTED, PURPLE, RED, YELLOW};
-use crate::common::ui::{
-    ControlSpec, dialog_block, dialog_body, dialog_height, dim_backdrop, line_width, panel_block,
-    panel_label,
-};
+use crate::common::ui::{ControlSpec, line_width, panel_block, panel_label};
 use crate::modules::panels::status;
 
 pub fn footer_control(show_status: bool) -> ControlSpec {
@@ -383,15 +381,12 @@ pub fn render_failure_dialog(
 ) {
     // Wide enough for the `nix log` line with the derivation path in it.
     const WIDTH: u16 = 88;
-    let height = dialog_height(FAILURE_BANNER_ROWS, false).min(area.height.saturating_sub(2));
+    let height = dialog::height(FAILURE_BANNER_ROWS, false).min(area.height.saturating_sub(2));
     let popup = centered_rect(WIDTH, height, area);
     frame.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(RED))
-        .title(panel_label("Failed"));
-    let inner = dialog_body(popup);
+    // The same corner every dialog wears: it closes the run, as Esc and Enter do here.
+    let block = dialog::block(clicks, hover, popup, " Failed ", RED, Command::Quit);
+    let inner = dialog::body(popup);
     frame.render_widget(block, popup);
     render_failure_prompt(frame, run, copy_button, hover, clicks, inner);
 }
@@ -409,10 +404,10 @@ pub fn render_details(
     area: Rect,
 ) {
     // Six rows of the run itself, plus the row that names the tree, plus the counts.
-    let popup = centered_rect(72, dialog_height(7 + counts.len() as u16, false), area);
-    dim_backdrop(frame, popup);
+    let popup = centered_rect(72, dialog::height(7 + counts.len() as u16, false), area);
+    dialog::dim_backdrop(frame, popup);
     frame.render_widget(Clear, popup);
-    let block = dialog_block(
+    let block = dialog::block(
         clicks,
         hover,
         popup,
@@ -420,7 +415,7 @@ pub fn render_details(
         CYAN,
         Command::CloseOverlay,
     );
-    let inner = dialog_body(popup);
+    let inner = dialog::body(popup);
     frame.render_widget(block, popup);
 
     let elapsed = format_clock(run.elapsed());
@@ -466,7 +461,7 @@ pub fn render_confirm_cancel(
 ) {
     let (title, wording, keep_label, cancel_label) = if phase == Phase::Cleanup {
         (
-            " Cancel cleanup? ",
+            "Cancel cleanup?",
             [
                 "The cleanup's current step will be stopped.",
                 "The rebuild stays activated; nothing else changes.",
@@ -476,7 +471,7 @@ pub fn render_confirm_cancel(
         )
     } else {
         (
-            " Cancel rebuild? ",
+            "Cancel rebuild?",
             [
                 "The current process group will be stopped.",
                 "Activation may already have changed the system.",
@@ -485,82 +480,13 @@ pub fn render_confirm_cancel(
             "[Y  Cancel rebuild]",
         )
     };
-    let gap: &str = "   ";
-
-    let popup = centered_rect(58, dialog_height(5, false), area);
-    dim_backdrop(frame, popup);
-    frame.render_widget(Clear, popup);
-    let block = dialog_block(
-        clicks,
-        hover,
-        popup,
-        title.to_owned(),
-        RED,
-        Command::CloseOverlay,
-    );
-    let inner = dialog_body(popup);
-    frame.render_widget(block, popup);
-
-    frame.render_widget(
-        Paragraph::new(Text::from(
-            wording.map(Line::from).into_iter().collect::<Vec<_>>(),
-        ))
-        .alignment(Alignment::Center),
-        Rect::new(inner.x, inner.y, inner.width, 2),
-    );
-
-    let total = UnicodeWidthStr::width(keep_label)
-        + UnicodeWidthStr::width(gap)
-        + UnicodeWidthStr::width(cancel_label);
-    let start = inner
-        .x
-        .saturating_add(inner.width.saturating_sub(total as u16) / 2);
-    let row = inner.bottom().saturating_sub(2);
-    let keep_area = (start, row, UnicodeWidthStr::width(keep_label) as u16, 1);
-    let cancel_area = (
-        start
-            .saturating_add(keep_area.2)
-            .saturating_add(UnicodeWidthStr::width(gap) as u16),
-        row,
-        UnicodeWidthStr::width(cancel_label) as u16,
-        1,
-    );
-    let hovered = |target: (u16, u16, u16, u16)| {
-        hover.is_some_and(|hover| {
-            hover.column >= target.0
-                && hover.column < target.0.saturating_add(target.2)
-                && hover.row >= target.1
-                && hover.row < target.1.saturating_add(target.3)
-        })
-    };
-    let keep_hovered = hovered(keep_area);
-    let cancel_hovered = hovered(cancel_area);
-    let keep_style = if keep_hovered {
-        Style::default()
-            .fg(CYAN)
-            .add_modifier(Modifier::REVERSED | Modifier::UNDERLINED)
-    } else {
-        Style::default().fg(MUTED)
-    };
-    let cancel_style = if cancel_hovered {
-        Style::default()
-            .fg(RED)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED)
-    } else {
-        Style::default().fg(RED).add_modifier(Modifier::BOLD)
-    };
-    clicks.push((keep_area, Click::Command(Command::CloseOverlay)));
-    clicks.push((
-        cancel_area,
-        Click::Command(super::Command::ConfirmCancel.into()),
-    ));
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(keep_label, keep_style),
-            Span::raw(gap),
-            Span::styled(cancel_label, cancel_style),
-        ]))
-        .alignment(Alignment::Center),
-        Rect::new(inner.x, row, inner.width, 1),
-    );
+    Dialog::new(title.trim(), RED, Command::CloseOverlay)
+        .push(Line::from(wording[0]))
+        .push(Line::from(wording[1]))
+        .ask(
+            Answers::new(keep_label, cancel_label)
+                .colors(MUTED, RED)
+                .actions(Command::CloseOverlay, super::Command::ConfirmCancel.into()),
+        )
+        .render_in(frame, hover, clicks, area);
 }

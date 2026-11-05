@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::common::actions::Command;
+use crate::common::dialog;
 use crate::common::hit_targets::{Click, ClickMap, Hover, scrollbar_area, scrollbar_geometry};
 use crate::common::layout::{
     centered_rect, content_rows, padded_rows, panel_scrollbar, reserve_scrollbar_column,
@@ -17,8 +18,7 @@ use crate::common::nix_events::{LogKind, LogLevel};
 use crate::common::text::clip_line;
 use crate::common::theme::{BLUE, CYAN, GREEN, MUTED, PURPLE, RED, YELLOW};
 use crate::common::ui::{
-    ControlSpec, dialog_block, dialog_body, dialog_height, dialog_hint_row, dim_backdrop,
-    panel_block, panel_controls, panel_label, render_controls, toggle_line,
+    ControlSpec, panel_block, panel_controls, panel_label, render_controls, toggle_line,
 };
 
 use super::state::{FILTER_ROWS, FILTERABLE_KINDS, SAVE_ROW, SAVE_SELECTION, State, kind_name};
@@ -177,16 +177,16 @@ pub fn render_log_filter(
 ) {
     // Fourteen content rows plus the five of a hint dialog: two borders, the air above the body,
     // the body row left blank above the hint, and the hint row that replaces the bottom air.
-    let popup = centered_rect(64, dialog_height(FILTER_ROWS, true), area);
-    dim_backdrop(frame, popup);
+    let popup = centered_rect(64, dialog::height(FILTER_ROWS, true), area);
+    dialog::dim_backdrop(frame, popup);
     frame.render_widget(Clear, popup);
     let title = if state.filter_editing {
         " Filter logs  editing "
     } else {
         " Filter logs "
     };
-    let block = dialog_block(clicks, hover, popup, title, CYAN, Command::CloseOverlay);
-    let inner = dialog_body(popup);
+    let block = dialog::block(clicks, hover, popup, title, CYAN, Command::CloseOverlay);
+    let inner = dialog::body(popup);
     frame.render_widget(block, popup);
 
     let total = state.entries.len();
@@ -268,7 +268,7 @@ pub fn render_log_filter(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(MUTED))))
             .alignment(Alignment::Center),
-        dialog_hint_row(popup),
+        dialog::hint_row(popup),
     );
 }
 

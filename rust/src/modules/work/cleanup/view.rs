@@ -3,53 +3,18 @@
 use std::time::Instant;
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
+use ratatui::widgets::Paragraph;
 
-use crate::common::hit_targets::{Click, ClickMap, Hover};
-use crate::common::layout::centered_rect;
+use crate::common::dialog::{Answers, Dialog};
+use crate::common::hit_targets::{ClickMap, Hover};
 use crate::common::text::{animation_tick, format_clock};
-use crate::common::theme::{CYAN, GREEN, MUTED, PURPLE, RED, SPINNER_FRAMES, YELLOW};
-use crate::common::ui::{dialog_block, dialog_body, dialog_height, dim_backdrop};
+use crate::common::theme::{CYAN, GREEN, MUTED, PURPLE, RED, SPINNER_FRAMES};
 use crate::modules::work::cleanup::{CLEANUP_STAGES, State};
 
-// One key inside each chip, the word spelling the answer: the other keys that answer
-// (Enter, Esc) stay in the corner and in the help, not repeated twice on the same row.
-const NO_KEY: &str = "[N";
-const NO_WORD: &str = "  No]";
-const YES_KEY: &str = "[Y";
-const YES_WORD: &str = "  Yes]";
-const BUTTON_GAP: &str = "     ";
 const QUESTION: &str = "Clean old generations and collect garbage?";
-
-fn cells(text: &str) -> u16 {
-    UnicodeWidthStr::width(text) as u16
-}
-
-/// The answers' whole line, so the box width and the click rects come from the same measure.
-fn answers_width() -> u16 {
-    cells(NO_KEY) + cells(NO_WORD) + cells(BUTTON_GAP) + cells(YES_KEY) + cells(YES_WORD)
-}
-
-/// Question, blank row, answers: the two border rows and the one cell of air `dialog_body`
-/// keeps above and below them already separate the question from the rule.
-const QUESTION_ROWS: u16 = 3;
-const DIALOG_ROWS: u16 = dialog_height(QUESTION_ROWS, false);
-/// Air added to each side of the widest line: two of these cells land outside the body.
-const SIDE_PADDING: u16 = 10;
-/// Where the answers sit inside the body: question, blank row, then them.
-const ANSWERS_ROW: u16 = 2;
-
-/// The question's own box, wide enough for the text or its buttons, whichever is longer.
-fn question_rect(area: Rect) -> Rect {
-    let width = cells(QUESTION)
-        .max(answers_width())
-        .saturating_add(SIDE_PADDING);
-    centered_rect(width, DIALOG_ROWS, area)
-}
 
 /// The cleanup decision is the app's dialog, whichever cards are on screen: a question that
 /// changes the machine does not belong to a card the user may have closed. The corner answers
@@ -60,82 +25,20 @@ pub fn render_cleanup_dialog(
     hover: Option<Hover>,
     clicks: &mut ClickMap,
 ) {
-    let popup = question_rect(area);
-    dim_backdrop(frame, popup);
-    frame.render_widget(Clear, popup);
-    // No title: the question names itself, and the corner is the only chrome it needs.
-    let block = dialog_block(
-        clicks,
-        hover,
-        popup,
-        "",
-        YELLOW,
-        super::Command::SkipCleanup.into(),
-    );
-    frame.render_widget(block, popup);
-
-    let inner = dialog_body(popup);
-    let row = inner.y.saturating_add(ANSWERS_ROW);
-    let start = inner
-        .x
-        .saturating_add(inner.width.saturating_sub(answers_width()) / 2);
-    let no_area = (start, row, cells(NO_KEY) + cells(NO_WORD), 1);
-    let yes_area = (
-        start
-            .saturating_add(no_area.2)
-            .saturating_add(cells(BUTTON_GAP)),
-        row,
-        cells(YES_KEY) + cells(YES_WORD),
-        1,
-    );
-    clicks.push((no_area, Click::Command(super::Command::SkipCleanup.into())));
-    clicks.push((
-        yes_area,
-        Click::Command(super::Command::StartCleanup.into()),
-    ));
-
-    let hovered = |target: (u16, u16, u16, u16)| {
-        hover.is_some_and(|hover| {
-            hover.column >= target.0
-                && hover.column < target.0.saturating_add(target.2)
-                && hover.row == target.1
-        })
-    };
-    let button_style = |target, color| {
-        let style = Style::default().fg(color);
-        if hovered(target) {
-            style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            style
-        }
-    };
-    let text = Text::from(vec![
-        Line::from(Span::styled(
-            QUESTION,
-            Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
-        )),
-        Line::default(),
-        Line::from(vec![
-            // Red for the answer that declines: grey was too quiet to rival the green.
-            Span::styled(
-                NO_KEY,
-                button_style(no_area, RED).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(NO_WORD, button_style(no_area, RED)),
-            Span::raw(BUTTON_GAP),
-            Span::styled(
-                YES_KEY,
-                button_style(yes_area, GREEN).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(YES_WORD, button_style(yes_area, GREEN)),
-        ]),
-    ]);
-    frame.render_widget(
-        Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
+    // No title: the question names itself, and the corner is the only chrome it needs. Red for
+    // the answer that declines, green for the one that starts the work.
+    Dialog::confirm("", QUESTION)
+        .ask(
+            Answers::new("[N  No]", "[Y  Yes]")
+                .colors(RED, GREEN)
+                .actions(
+                    super::Command::SkipCleanup.into(),
+                    super::Command::StartCleanup.into(),
+                ),
+        )
+        .close(super::Command::SkipCleanup.into())
+        .padding(10)
+        .render_in(frame, hover, clicks, area);
 }
 
 /// Every stage marked done, running or to come, plus the pass's generations

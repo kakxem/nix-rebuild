@@ -7,13 +7,11 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::common::actions::Command;
+use crate::common::dialog;
 use crate::common::hit_targets::{ClickMap, Hover};
 use crate::common::layout::centered_rect;
 use crate::common::theme::{CYAN, GREEN, MUTED};
-use crate::common::ui::HelpEntry;
-use crate::common::ui::{
-    ControlSpec, dialog_block, dialog_body, dialog_height, dialog_hint_row, dim_backdrop,
-};
+use crate::common::ui::{ControlSpec, HelpEntry};
 use crate::modules::panels::help::State;
 
 /// The help overlay's footer control: the last one on the footer row.
@@ -39,9 +37,9 @@ pub fn render_help(
     let entries: Vec<HelpEntry> = state.help_entries().collect();
     // Two border rows, one cell of air each side, and the hint row on the frame: the list keeps
     // a blank row of its own above the hint.
-    let height = dialog_height(entries.len() as u16, true).clamp(8, area.height.saturating_sub(2));
+    let height = dialog::height(entries.len() as u16, true).clamp(8, area.height.saturating_sub(2));
     let popup = centered_rect(64, height, area);
-    dim_backdrop(frame, popup);
+    dialog::dim_backdrop(frame, popup);
     frame.render_widget(Clear, popup);
 
     let title = if state.filtering {
@@ -51,11 +49,11 @@ pub fn render_help(
     } else {
         format!(" Keyboard  /{} ", state.query)
     };
-    let block = dialog_block(clicks, hover, popup, title, CYAN, Command::CloseOverlay);
-    let inner = dialog_body(popup);
+    let block = dialog::block(clicks, hover, popup, title, CYAN, Command::CloseOverlay);
+    let inner = dialog::body(popup);
     frame.render_widget(block, popup);
 
-    // The air above the list comes from `dialog_body`; the blank row above the hint is the list's.
+    // The air above the list comes from `dialog::body`; the blank row above the hint is the list's.
     let list = Rect {
         y: inner.y,
         height: inner.height.saturating_sub(1).max(1),
@@ -106,6 +104,6 @@ pub fn render_help(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(MUTED))))
             .alignment(Alignment::Center),
-        dialog_hint_row(popup),
+        dialog::hint_row(popup),
     );
 }

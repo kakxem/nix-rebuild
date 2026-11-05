@@ -1,15 +1,14 @@
-//! One spec and one renderer for every clickable control. The renderer reports the
-//! width it painted, so the mouse hit map follows the screen, not a copy of the layout.
+//! What a card is made of: its label, its clickable controls, and the renderer that reports the
+//! width it painted, so the mouse hit map follows the screen instead of a copy of the layout.
 
-use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
 use unicode_width::UnicodeWidthStr;
 
 use crate::common::actions::Command;
-use crate::common::hit_targets::{Click, ClickMap, Hover};
-use crate::common::theme::{CYAN, GREEN, MUTED, RED};
+use crate::common::hit_targets::Click;
+use crate::common::theme::{CYAN, GREEN, MUTED};
 
 /// One row of the keyboard help overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +184,7 @@ pub fn toggle_line(label: &str, on: bool, selected: bool) -> Line<'static> {
     ])
 }
 
-/// The frame a card draws itself in. Dialogs have `dialog_block`; cards have this, so the
+/// The frame a card draws itself in. Dialogs have `dialog::block`; cards have this, so the
 /// border style, the title rule and where its controls ride are one edit for all of them.
 pub fn panel_block(
     title: Line<'static>,
@@ -201,128 +200,6 @@ pub fn panel_block(
         Some(line) => block.title_top(line),
         None => block,
     }
-}
-
-const CLOSE_CELLS: u16 = 5;
-
-/// The dialog's body: one cell of air inside the border, on every side. Every dialog lays its
-/// text and its hit map out from this rect, so the inset is not something a new dialog can
-/// forget and a clickable row cannot drift from the row it paints. A dialog that needs more
-/// air than this adds it to the box it asks for, never by insetting again here.
-pub fn dialog_body(popup: Rect) -> Rect {
-    Rect {
-        x: popup.x.saturating_add(2),
-        y: popup.y.saturating_add(2),
-        width: popup.width.saturating_sub(4),
-        height: popup.height.saturating_sub(4),
-    }
-}
-
-/// The rows a dialog needs for `content` rows of body: the two borders and the air above it, plus
-/// the hint row and the blank row that keeps the hint off the content when it carries one. A
-/// dialog that adds a row of content asks for one more here instead of hand-tuning its height.
-pub const fn dialog_height(content: u16, hint: bool) -> u16 {
-    content + if hint { 5 } else { 4 }
-}
-
-/// The dialog's bottom row, inside the borders and outside the body: a hint sits here, hugging
-/// the frame, because it is the dialog's chrome and not part of what the body lays out. A dialog
-/// with a hint leaves its body's last row blank, so the hint never touches the content above it:
-/// that is `content + 5` rows, the fifth being this one.
-pub fn dialog_hint_row(popup: Rect) -> Rect {
-    Rect {
-        x: popup.x.saturating_add(1),
-        y: popup.bottom().saturating_sub(2),
-        width: popup.width.saturating_sub(2),
-        height: 1,
-    }
-}
-
-/// The dialog's title rule, with the corner that answers the one key that leaves it. Opening the
-/// dialog here is what makes it modal: the box and the command its backdrop means are recorded
-/// with the frame's own controls, and nothing behind answers until the next frame drops it.
-pub fn dialog_block(
-    clicks: &mut ClickMap,
-    hover: Option<Hover>,
-    popup: Rect,
-    title: impl Into<String>,
-    color: Color,
-    close: Command,
-) -> Block<'static> {
-    clicks.open_dialog((popup.x, popup.y, popup.width, popup.height), close);
-    // The way out is the key itself: `[Esc]` says nothing the footer has to repeat.
-    let corner = (popup.right().saturating_sub(6), popup.y, CLOSE_CELLS, 1);
-    clicks.push((corner, Click::Command(close)));
-    let hovered = hover.is_some_and(|hover| {
-        hover.column >= corner.0
-            && hover.column < corner.0.saturating_add(corner.2)
-            && hover.row == corner.1
-    });
-    let close_style = if hovered {
-        Style::default()
-            .fg(RED)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-    } else {
-        Style::default().fg(MUTED).add_modifier(Modifier::BOLD)
-    };
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(color))
-        .title(Span::styled(
-            title.into(),
-            Style::default().fg(color).bold(),
-        ))
-        .title_top(Line::from(Span::styled("[Esc]", close_style)).right_aligned())
-}
-
-/// How much of each channel survives behind a dialog. A terminal cell has no alpha, so a
-/// backdrop cannot be shaded: what is already painted recedes by turning darker.
-const BACKDROP_PERCENT: u16 = 50;
-
-/// What an uncoloured cell becomes behind a dialog, `Reset` being the terminal's own fg.
-const BACKDROP_UNCOLOURED: Color = Color::Rgb(70, 70, 70);
-
-/// Darken every painted cell outside the dialog's own rect, so the dialog reads first.
-pub fn dim_backdrop(frame: &mut ratatui::Frame<'_>, keep: Rect) {
-    let area = frame.area();
-    let buffer = frame.buffer_mut();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if x >= keep.x && x < keep.right() && y >= keep.y && y < keep.bottom() {
-                continue;
-            }
-            if let Some(cell) = buffer.cell_mut((x, y)) {
-                let style = recede(cell.style());
-                cell.set_style(style);
-            }
-        }
-    }
-}
-
-/// A cell's own colour at half brightness. `Reset` text has no colour to halve, so it takes
-/// the dim grey; a `Reset` background is the terminal's own and must not be painted over.
-fn recede(style: Style) -> Style {
-    let fg = match style.fg {
-        None | Some(Color::Reset) => BACKDROP_UNCOLOURED,
-        Some(color) => darken(color),
-    };
-    Style {
-        fg: Some(fg),
-        bg: style.bg.map(darken),
-        ..style
-    }
-}
-
-fn darken(color: Color) -> Color {
-    match color {
-        Color::Rgb(r, g, b) => Color::Rgb(part(r), part(g), part(b)),
-        other => other,
-    }
-}
-
-fn part(channel: u8) -> u8 {
-    (u16::from(channel) * BACKDROP_PERCENT / 100) as u8
 }
 
 /// The painted cells as lines of text, trailing blanks trimmed. Tests read the screen with it.

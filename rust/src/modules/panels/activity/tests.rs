@@ -1054,7 +1054,7 @@ fn the_filter_dialog_keeps_a_cell_of_air_inside_its_border() {
     assert_eq!(
         option,
         top + 2,
-        "the body starts one cell under the rule, from `dialog_body`:\n{screen}"
+        "the body starts one cell under the rule, from `dialog::body`:\n{screen}"
     );
     let corner = lines[top]
         .chars()

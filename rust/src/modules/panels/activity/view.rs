@@ -9,6 +9,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Clear, Paragraph, Row, Table};
 
 use crate::common::actions::Command;
+use crate::common::dialog;
 use crate::common::hit_targets::{Click, ClickMap, Hover, scrollbar_area, scrollbar_geometry};
 use crate::common::layout::{
     centered_rect, content_rows, padded_rows, panel_scrollbar, reserve_scrollbar_column,
@@ -18,8 +19,7 @@ use crate::common::phase::Phase;
 use crate::common::text::{animation_tick, format_clock, human_bytes};
 use crate::common::theme::{BLUE, CYAN, GREEN, MUTED, PURPLE, RED, SPINNER_FRAMES, YELLOW};
 use crate::common::ui::{
-    ControlSpec, dialog_block, dialog_body, dialog_height, dialog_hint_row, dim_backdrop,
-    panel_block, panel_controls, panel_label, render_controls, toggle_line,
+    ControlSpec, panel_block, panel_controls, panel_label, render_controls, toggle_line,
 };
 
 use super::state::{
@@ -329,10 +329,10 @@ pub fn render_activity_filter(
     clicks: &mut ClickMap,
     area: Rect,
 ) {
-    let popup = centered_rect(54, dialog_height(ACTIVITY_FILTER_ROWS, true), area);
-    dim_backdrop(frame, popup);
+    let popup = centered_rect(54, dialog::height(ACTIVITY_FILTER_ROWS, true), area);
+    dialog::dim_backdrop(frame, popup);
     frame.render_widget(Clear, popup);
-    let block = dialog_block(
+    let block = dialog::block(
         clicks,
         hover,
         popup,
@@ -340,7 +340,7 @@ pub fn render_activity_filter(
         CYAN,
         Command::CloseOverlay,
     );
-    let inner = dialog_body(popup);
+    let inner = dialog::body(popup);
     frame.render_widget(block, popup);
     state.filter_rows = (0..3)
         .map(|index| (inner.x, inner.y + index, inner.width, 1))
@@ -406,7 +406,7 @@ pub fn render_activity_filter(
             Style::default().fg(MUTED),
         )))
         .alignment(Alignment::Center),
-        dialog_hint_row(popup),
+        dialog::hint_row(popup),
     );
 }
 

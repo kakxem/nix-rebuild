@@ -24,6 +24,32 @@ fn footer_row(screen: &str) -> &str {
         .expect("global footer")
 }
 
+/// One corner and one key for every question: whatever dialog is up, `[Esc]` is drawn and
+/// pressing it leaves.
+#[test]
+fn every_dialog_wears_the_corner_and_esc_leaves_it() {
+    for overlay in [
+        Overlay::Help,
+        Overlay::Details,
+        Overlay::LogFilter,
+        Overlay::ActivityFilter,
+        Overlay::Settings,
+        Overlay::RemoveRunsPrompt,
+        Overlay::ConfirmCancel,
+        Overlay::CleanupPrompt,
+    ] {
+        let mut app = app();
+        app.overlay = overlay;
+        let screen = render_to_string(&app, 120, 30);
+        assert!(
+            screen.contains("[Esc]"),
+            "{overlay:?} wears the corner every dialog wears:\n{screen}"
+        );
+        press(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.overlay, Overlay::None, "{overlay:?} leaves on Esc");
+    }
+}
+
 #[test]
 fn the_wheel_moves_the_help_list_and_leaves_it_open() {
     let mut app = app();
@@ -1304,8 +1330,12 @@ fn the_failure_prompt_survives_the_activity_card_being_hidden() {
     let screen = render_to_string(&app, 120, 30);
 
     assert!(
-        screen.contains("╭─ Failed"),
+        screen.contains("╭ Failed"),
         "the prompt becomes a dialog of its own, got:\n{screen}"
+    );
+    assert!(
+        screen.contains("[Esc]"),
+        "and wears the same corner as every other dialog, got:\n{screen}"
     );
     assert!(screen.contains("rebuild failed · nix-rebuild-0.1.0"));
     assert!(screen.contains("[Enter  Close]"));

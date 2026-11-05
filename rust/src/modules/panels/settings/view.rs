@@ -9,11 +9,11 @@ use ratatui::widgets::{Clear, Paragraph};
 use super::state::{Line as RowLine, State};
 use crate::common::actions::Command;
 use crate::common::config::Reading;
+use crate::common::dialog;
 use crate::common::hit_targets::{ClickMap, Hover, scrollbar_area, scrollbar_geometry};
 use crate::common::layout::{centered_rect, panel_scrollbar, scrollbar_state};
 use crate::common::text::human_bytes;
 use crate::common::theme::{CYAN, GREEN, MUTED, RED};
-use crate::common::ui::{dialog_block, dialog_body, dialog_height, dim_backdrop};
 
 const LABEL_WIDTH: usize = 27;
 /// Where the value column starts, counted from the list's left edge: cursor and padding first.
@@ -44,12 +44,12 @@ pub fn render_settings(
     let tallest = area.height.saturating_sub(2).max(MIN_HEIGHT);
     let popup = centered_rect(
         DIALOG_WIDTH,
-        dialog_height(rows, false).clamp(MIN_HEIGHT, tallest),
+        dialog::height(rows, false).clamp(MIN_HEIGHT, tallest),
         area,
     );
-    dim_backdrop(frame, popup);
+    dialog::dim_backdrop(frame, popup);
     frame.render_widget(Clear, popup);
-    let block = dialog_block(
+    let block = dialog::block(
         clicks,
         hover,
         popup,
@@ -57,7 +57,7 @@ pub fn render_settings(
         CYAN,
         Command::CloseOverlay,
     );
-    let list = dialog_body(popup);
+    let list = dialog::body(popup);
     frame.render_widget(block, popup);
 
     state.set_offset(list.height as usize);

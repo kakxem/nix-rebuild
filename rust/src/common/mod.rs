@@ -4,6 +4,7 @@ pub mod actions;
 pub mod cleanup_policy;
 pub mod cli;
 pub mod config;
+pub mod dialog;
 pub mod hit_targets;
 pub mod layout;
 pub mod nix_events;
