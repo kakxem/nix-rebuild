@@ -31,9 +31,19 @@ terminal it is required.
 
 ## Reading them
 
-`nix-rebuild runs` opens the picker: one row per run with its date, id, scope,
-result, duration and checkout. The arrows move, `Enter` opens the run in the
-frame, `/` searches the columns, and `Esc` leaves.
+`nix-rebuild runs` opens the picker: one row per run with its date, id, action,
+scope, lock, result, duration and checkout. The action is the verb that started the
+run (`switch`, `boot`, `update` or `rollback`), so an update is not read as the
+`switch` it ends with; the scope is the step the run ended on. The arrows move,
+`Enter` opens the run in the frame, `/` searches the columns, and `Esc` leaves.
+
+The lock column is the digest of the `flake.lock` the run built with, read when the
+run finished: an update has already moved the file by then, so the value is of the
+inputs the build used, not the ones it replaced. Two runs with the same inputs show
+the same eight characters, which is how a `home` or `system` switch can be matched to
+the update that pinned it, and `runs <ID> --logs` prints the whole digest. It is an
+FNV-1a digest of the file, not a checksum to compare with `sha256`. A flake reference
+that is not a local path has no file to read, so its column stays empty.
 
 `runs <ID>` opens that run directly, and `last` names the newest one.
 `runs --list` prints the same table to stdout and `runs <ID> --logs` prints one

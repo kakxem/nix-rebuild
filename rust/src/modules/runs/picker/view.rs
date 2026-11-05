@@ -52,7 +52,7 @@ pub struct PickerGeometry {
     pub offset: usize,
     pub total: usize,
     /// The x range of each column, the gaps around it included.
-    pub columns: [(u16, u16); 6],
+    pub columns: [(u16, u16); 8],
     pub chips: Vec<(PickerChip, u16, u16)>,
 }
 
@@ -180,8 +180,8 @@ fn chip_ranges(
 
 /// Where each column lands across the frame, gaps included.
 /// A click anywhere over a heading works; the last column runs to the right edge.
-fn column_ranges(inner: Rect) -> [(u16, u16); 6] {
-    let mut ranges = [(0u16, 0u16); 6];
+fn column_ranges(inner: Rect) -> [(u16, u16); 8] {
+    let mut ranges = [(0u16, 0u16); 8];
     let mut at = inner.x + PICKER_MARKER;
     for (index, column) in Column::ALL.iter().enumerate() {
         let end = if index + 1 == Column::ALL.len() {
@@ -234,7 +234,16 @@ fn picker_row(meta: &Meta, selected: bool) -> Line<'static> {
         Some(0) => GREEN,
         Some(_) => RED,
     };
-    let color = [MUTED, Color::Reset, MUTED, outcome, MUTED, MUTED];
+    let color = [
+        MUTED,
+        Color::Reset,
+        MUTED,
+        MUTED,
+        MUTED,
+        outcome,
+        MUTED,
+        MUTED,
+    ];
     let shade = selected.then(|| Style::default().bg(SHADE));
     let mut spans = vec![Span::styled(
         if selected { " ❯ " } else { "   " }.to_owned(),

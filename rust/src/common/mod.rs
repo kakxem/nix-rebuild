@@ -15,6 +15,7 @@ pub mod progress;
 pub mod records;
 pub mod scope;
 pub mod setup;
+pub mod state;
 pub mod terminal;
 pub mod text;
 pub mod theme;

@@ -32,6 +32,20 @@ pub fn local_parts(epoch_seconds: i64) -> (i64, i64, i64, i64, i64, i64) {
     )
 }
 
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// A table's `WHEN` cell for an epoch second: `29 Oct 13:42`, on the machine's own clock.
+pub fn when(epoch_seconds: u64) -> String {
+    let (_, month, day, hour, minute, _) = local_parts(epoch_seconds as i64);
+    let month = MONTHS
+        .get(month.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("???");
+    format!("{day:02} {month} {hour:02}:{minute:02}")
+}
+
 /// The wall-clock of an epoch second on the local offset, so a run across a DST
 /// boundary stamps the time the user saw. An instant the local zone refuses is read as UTC.
 fn local_clock(epoch_seconds: i64) -> NaiveDateTime {

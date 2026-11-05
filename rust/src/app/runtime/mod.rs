@@ -104,8 +104,9 @@ pub fn run_steps(app: &mut App, steps: Vec<Step>, tools: ToolPaths) -> anyhow::R
     let mut session = Recording::start(
         app.status.scope,
         &app.status.flake,
-        &app.status.action,
+        &app.flow,
         app.cleanup.policy,
+        app.kept_lock.as_deref(),
     );
     app.run_id = session.as_ref().map(|session| session.id().to_owned());
 
@@ -361,7 +362,7 @@ fn replay_area(width: u16, rows: u16) -> Rect {
 fn session_outcome(app: &App) -> records::Outcome {
     records::Outcome {
         scope: app.status.scope,
-        action: app.status.action.clone(),
+        action: app.flow.clone(),
         exit_code: app.status.exit_code,
         status: app.status.message.clone(),
     }

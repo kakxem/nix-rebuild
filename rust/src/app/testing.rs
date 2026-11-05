@@ -69,6 +69,8 @@ pub fn run_meta_with_cleanup(
         exit_code,
         cleanup_ok,
         status: status.into(),
+        kept: None,
+        lock: String::new(),
     }
 }
 

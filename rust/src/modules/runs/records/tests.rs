@@ -23,6 +23,8 @@ fn a_reopened_run_keeps_the_length_and_the_ending_it_had() {
         exit_code: Some(0),
         cleanup_ok: Some(false),
         status: "rebuild completed, cleanup failed".into(),
+        kept: None,
+        lock: String::new(),
     };
 
     let app = App::reopen(&meta, &[]);
@@ -35,6 +37,10 @@ fn a_reopened_run_keeps_the_length_and_the_ending_it_had() {
     assert_eq!(app.status.phase, Phase::Complete);
     assert_eq!(app.status.scope, Scope::System);
     assert_eq!(app.status.action, "boot");
+    assert_eq!(
+        app.flow, "boot",
+        "a reopened run keeps the verb it was started by"
+    );
     assert_eq!(
         app.run_id.as_deref(),
         Some("20261008-214733-a3f0"),
@@ -69,7 +75,8 @@ fn a_run_is_recorded_and_reopens_with_its_panes_rebuilt() {
     temp_env::with_var("XDG_STATE_HOME", Some(&dir), || {
         let flake = "/home/user/.config/nixos-dotfiles#sample";
         let mut recording =
-            Recording::start(Scope::Home, flake, "switch", CleanupPolicy::Ask).expect("a runs dir");
+            Recording::start(Scope::Home, flake, "switch", CleanupPolicy::Ask, None)
+                .expect("a runs dir");
         recording.record('O', "Activating checkLinkTargets");
         recording.record(
         'J',
@@ -278,6 +285,8 @@ fn a_reopened_failed_run_still_names_the_package_that_broke() {
         exit_code: Some(1),
         cleanup_ok: None,
         status: "home-manager switch exited with 1".into(),
+        kept: None,
+        lock: String::new(),
     };
     let records = vec![
         Record {
@@ -506,6 +515,8 @@ fn a_run_recorded_before_the_rename_is_listed_read_and_still_pruned() {
             exit_code: Some(0),
             cleanup_ok: None,
             status: "ok".into(),
+            kept: None,
+            lock: String::new(),
         };
         std::fs::write(old.join("meta.conf"), header.text()).expect("its header");
         std::fs::write(old.join("run.log"), "O\tactivating\n").expect("its log");
@@ -516,8 +527,14 @@ fn a_run_recorded_before_the_rename_is_listed_read_and_still_pruned() {
         assert_eq!(records.len(), 1, "and its log comes with it");
 
         // A new recording lands under runs/, and the list holds both.
-        let fresh = Recording::start(Scope::Home, "/repo#sample", "switch", CleanupPolicy::Ask)
-            .expect("a runs dir");
+        let fresh = Recording::start(
+            Scope::Home,
+            "/repo#sample",
+            "switch",
+            CleanupPolicy::Ask,
+            None,
+        )
+        .expect("a runs dir");
         let fresh_id = fresh.id().to_owned();
         fresh.seal();
         assert!(
@@ -531,4 +548,41 @@ fn a_run_recorded_before_the_rename_is_listed_read_and_still_pruned() {
         assert_eq!(list().len(), 1, "pruning reaches both directories");
         assert_eq!(list()[0].id, fresh_id, "the newest is the one kept");
     });
+}
+
+#[test]
+fn the_inputs_a_run_built_with_are_read_from_its_checkout() {
+    use super::checkout_digest;
+
+    let dir = std::env::temp_dir().join(format!("nix-rebuild-digest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a checkout");
+    std::fs::write(dir.join("flake.lock"), "{\"nodes\": {}}\n").expect("a lock");
+    let checkout = dir.to_str().expect("utf-8 path").to_owned();
+
+    let first = checkout_digest(&format!("{checkout}#sample"));
+    assert_eq!(
+        first.chars().count(),
+        16,
+        "a digest is sixteen hex characters"
+    );
+    assert_eq!(
+        checkout_digest(&checkout),
+        first,
+        "the attribute after the hash names no directory"
+    );
+
+    std::fs::write(dir.join("flake.lock"), "{\"nodes\": {\"other\": {}}}\n").expect("another lock");
+    assert_ne!(
+        first,
+        checkout_digest(&checkout),
+        "other inputs read differently, which is the whole point of the column"
+    );
+
+    assert_eq!(
+        checkout_digest("/no/such/checkout"),
+        String::new(),
+        "no file, no digest: a flake reference is not always a path"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

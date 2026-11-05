@@ -41,8 +41,13 @@ pub enum Overlay {
 #[derive(Debug, Clone)]
 pub struct App {
     pub status: status::State,
+    /// How this run was invoked: `switch`, `boot`, `update` or `rollback`. The journal records
+    /// it, because a multi-step run ends on a `switch` whatever started it.
+    pub flow: String,
     /// Record id for this run; `None` until the record exists or if the run could not be recorded.
     pub run_id: Option<String>,
+    /// The kept lock file this run replaced, so the journal can point at it.
+    pub kept_lock: Option<String>,
     /// True while the closing frame (the one the user leaves) is being drawn.
     pub closing: bool,
     /// True when this frame reads back a recorded run rather than a live one.
@@ -78,9 +83,12 @@ pub struct App {
 
 impl App {
     pub fn new(scope: Scope, flake: String, boot: bool, policy: CleanupPolicy) -> Self {
+        let run = status::State::new(scope, flake, boot);
         Self {
-            status: status::State::new(scope, flake, boot),
+            flow: run.action.clone(),
+            status: run,
             run_id: None,
+            kept_lock: None,
             closing: false,
             reopened: false,
             config: Settings::default(),
@@ -417,6 +425,7 @@ impl App {
             meta.policy(),
         );
         app.status.action = meta.action.clone();
+        app.flow = meta.action.clone();
         app.run_id = Some(meta.id.clone());
         for record in records {
             let action = if record.json {

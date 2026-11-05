@@ -11,8 +11,9 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 
 use crate::common::cleanup_policy::CleanupPolicy;
-use crate::common::records::{Meta, Record};
+use crate::common::records::{Meta, Record, lock_digest};
 use crate::common::scope::Scope;
+use crate::common::state::state_base;
 use crate::common::time::backup_stamp;
 
 /// Ceiling for every recorded run: a few 150 MB updates would otherwise fill the home.
@@ -32,9 +33,21 @@ pub struct Recording {
     log: File,
 }
 
+/// The digest of the checkout's `flake.lock`, or nothing when there is no file to read: a flake
+/// reference that is not a local path has none. The attribute after `#` names no directory.
+fn checkout_digest(flake: &str) -> String {
+    lock_digest(flake).unwrap_or_default()
+}
+
 impl Recording {
     /// Returns `None` when the home cannot be written: losing the record must never stop a rebuild.
-    pub fn start(scope: Scope, flake: &str, action: &str, policy: CleanupPolicy) -> Option<Self> {
+    pub fn start(
+        scope: Scope,
+        flake: &str,
+        action: &str,
+        policy: CleanupPolicy,
+        kept: Option<&str>,
+    ) -> Option<Self> {
         let id = format!("{}-{:x}", backup_stamp(), std::process::id());
         let dir = runs_dir().join(&id);
         fs::create_dir_all(&dir).ok()?;
@@ -47,6 +60,7 @@ impl Recording {
             cleanup: policy.stored().into(),
             started_at: epoch_seconds(),
             status: "running".into(),
+            kept: kept.map(str::to_owned),
             ..Meta::default()
         };
         let recording = Self { dir, meta, log };
@@ -65,12 +79,16 @@ impl Recording {
 
     pub fn finish(&mut self, outcome: Outcome, cleanup_ok: Option<bool>) {
         self.meta.finished_at = Some(epoch_seconds());
-        // A multi-step run is recorded under the step it ended on, not the one it started with.
+        // The scope is the step the run ended on; the action is how it was invoked, so an
+        // update and a rollback stay apart from the `switch` each of them ends with.
         self.meta.scope = outcome.scope.to_string();
         self.meta.action = outcome.action;
         self.meta.exit_code = Some(outcome.exit_code);
         self.meta.cleanup_ok = cleanup_ok;
         self.meta.status = outcome.status;
+        // Read at the end, not at the start: an update's own `nix flake update` has landed by
+        // then, so the digest is of the inputs the build actually used.
+        self.meta.lock = checkout_digest(&self.meta.flake);
         self.write_meta();
     }
 
@@ -103,14 +121,6 @@ impl Recording {
             let _ = fs::remove_file(&temp);
         }
     }
-}
-
-/// Where the state directory lives: `$XDG_STATE_HOME`, else `~/.local/state`.
-fn state_base() -> PathBuf {
-    std::env::var("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .unwrap_or_else(|_| PathBuf::from(".local/state"))
 }
 
 /// `$XDG_STATE_HOME/nix-rebuild/runs`, where a new recording is written.

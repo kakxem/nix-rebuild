@@ -4,7 +4,6 @@
 use crate::common::cleanup_policy::CleanupPolicy;
 use crate::common::pairs::pairs;
 use crate::common::scope::Scope;
-use crate::common::time::local_parts;
 
 /// Written as `key = value` lines: readable without a JSON parser.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,6 +19,10 @@ pub struct Meta {
     pub exit_code: Option<i32>,
     pub cleanup_ok: Option<bool>,
     pub status: String,
+    /// The lock file this run kept, when it kept one: what `R` in the runs selector puts back.
+    pub kept: Option<String>,
+    /// The digest of the `flake.lock` this run built with, read when it finished.
+    pub lock: String,
 }
 
 impl Meta {
@@ -29,6 +32,12 @@ impl Meta {
             "id = {}\nscope = {}\nflake = \"{}\"\naction = {}\ncleanup = {}\nstarted_at = {}\n",
             self.id, self.scope, self.flake, self.action, self.cleanup, self.started_at
         );
+        if let Some(kept) = &self.kept {
+            text.push_str(&format!("kept = {kept}\n"));
+        }
+        if !self.lock.is_empty() {
+            text.push_str(&format!("lock = {}\n", self.lock));
+        }
         if let Some(finished) = self.finished_at {
             text.push_str(&format!("finished_at = {finished}\n"));
         }
@@ -60,6 +69,8 @@ impl Meta {
                 _ => None,
             },
             status: get("status"),
+            kept: values.get("kept").filter(|kept| !kept.is_empty()).cloned(),
+            lock: get("lock"),
         }
     }
 
@@ -87,12 +98,7 @@ impl Meta {
     }
 
     pub fn when(&self) -> String {
-        let (_, month, day, hour, minute, _) = local_parts(self.started_at as i64);
-        let month = MONTHS
-            .get(month.saturating_sub(1) as usize)
-            .copied()
-            .unwrap_or("???");
-        format!("{day:02} {month} {hour:02}:{minute:02}")
+        crate::common::time::when(self.started_at)
     }
 
     /// Searches the list's columns plus the status, which the list leaves out.
@@ -117,16 +123,23 @@ impl Meta {
         }
     }
 
-    /// The run and its checkout, unshortened, for a reading with no frame to name the run.
+    /// The line `runs <ID> --logs` starts with: action before scope, so an `update` is never
+    /// mistaken for the scope it activated, and the whole digest where the table has room for
+    /// its head only.
     pub fn heading(&self) -> String {
-        format!(
-            "{} · {} · {} · {}\ncheckout: {}\n\n",
+        let mut text = format!(
+            "{} · {} · {} · {}\ncheckout: {}\n",
             self.id,
-            self.scope,
             self.action,
+            self.scope,
             self.outcome(),
             self.flake
-        )
+        );
+        if !self.lock.is_empty() {
+            text.push_str(&format!("lock: {}\n", self.lock));
+        }
+        text.push('\n');
+        text
     }
 
     pub fn policy(&self) -> CleanupPolicy {
@@ -144,9 +157,12 @@ pub struct Record {
 /// Shared by the table and the selector; each fits its heading plus the sort arrow.
 pub const WHEN_COLUMN: usize = 12;
 pub const ID_COLUMN: usize = 21;
+pub const ACTION_COLUMN: usize = 8;
 pub const SCOPE_COLUMN: usize = 7;
 pub const RESULT_COLUMN: usize = 8;
-pub const DURATION_COLUMN: usize = 10;
+pub const DURATION_COLUMN: usize = 8;
+/// The first characters of the lock digest: enough to tell two locks apart at a glance.
+pub const LOCK_COLUMN: usize = 8;
 
 pub const COLUMN_GAP: &str = "  ";
 
@@ -155,15 +171,13 @@ pub fn clock(duration: std::time::Duration) -> String {
     crate::common::text::format_clock(duration)
 }
 
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {
     When,
     Id,
+    Action,
     Scope,
+    Lock,
     Result,
     Duration,
     Checkout,
@@ -177,10 +191,12 @@ pub enum Order {
 
 impl Column {
     /// Every column, in draw order.
-    pub const ALL: [Column; 6] = [
+    pub const ALL: [Column; 8] = [
         Column::When,
         Column::Id,
+        Column::Action,
         Column::Scope,
+        Column::Lock,
         Column::Result,
         Column::Duration,
         Column::Checkout,
@@ -191,7 +207,9 @@ impl Column {
         match self {
             Column::When => WHEN_COLUMN,
             Column::Id => ID_COLUMN,
+            Column::Action => ACTION_COLUMN,
             Column::Scope => SCOPE_COLUMN,
+            Column::Lock => LOCK_COLUMN,
             Column::Result => RESULT_COLUMN,
             Column::Duration => DURATION_COLUMN,
             Column::Checkout => 0,
@@ -202,7 +220,9 @@ impl Column {
         match self {
             Column::When => "WHEN",
             Column::Id => "ID",
+            Column::Action => "ACTION",
             Column::Scope => "SCOPE",
+            Column::Lock => "LOCK",
             Column::Result => "RESULT",
             Column::Duration => "DURATION",
             Column::Checkout => "CHECKOUT",
@@ -213,7 +233,9 @@ impl Column {
         match self {
             Column::When => meta.when(),
             Column::Id => fit(&meta.id, ID_COLUMN),
+            Column::Action => fit(&meta.action, ACTION_COLUMN),
             Column::Scope => fit(&meta.scope, SCOPE_COLUMN),
+            Column::Lock => head(&meta.lock, LOCK_COLUMN),
             Column::Result => fit(&meta.outcome(), RESULT_COLUMN),
             Column::Duration => fit(&meta.duration(), DURATION_COLUMN),
             Column::Checkout => checkout(meta),
@@ -234,7 +256,7 @@ impl Column {
 }
 
 /// One cell per column. The status is left out on purpose: a sentence belongs in the run's frame.
-pub fn columns(meta: &Meta) -> [String; 6] {
+pub fn columns(meta: &Meta) -> [String; 8] {
     Column::ALL.map(|column| column.cell(meta))
 }
 
@@ -252,7 +274,7 @@ pub fn checkout_cell(flake: &str, home: &str) -> String {
     flake.to_owned()
 }
 
-pub fn padded_columns(meta: &Meta) -> [String; 6] {
+pub fn padded_columns(meta: &Meta) -> [String; 8] {
     Column::ALL.map(|column| {
         let cell = column.cell(meta);
         match column {
@@ -276,7 +298,7 @@ pub fn headings() -> String {
 }
 
 /// Separate cells so the selector can mark the column the list is ordered by.
-pub fn heading_cells() -> [String; 6] {
+pub fn heading_cells() -> [String; 8] {
     Column::ALL.map(|column| match column {
         Column::Checkout => column.heading().to_owned(),
         _ => format!("{:<w$}", column.heading(), w = column.width()),
@@ -295,6 +317,31 @@ pub fn listing(runs: &[Meta]) -> String {
         text.push('\n');
     }
     text
+}
+
+/// The first `width` characters: a digest is read by its head, so the tail it loses says nothing.
+pub fn head(value: &str, width: usize) -> String {
+    value.chars().take(width).collect()
+}
+
+/// The digest of the `flake.lock` a flake reference points at, with any `#attr` dropped. `None`
+/// when there is no lock to read, which a remote flake is not a failure for.
+pub fn lock_digest(flake: &str) -> Option<String> {
+    let checkout = flake.split('#').next().unwrap_or_default();
+    let bytes = std::fs::read(std::path::Path::new(checkout).join("flake.lock")).ok()?;
+    Some(digest(&bytes))
+}
+
+/// A short identity for a lock file's contents: two runs that read the same file read the same
+/// value, so the table says which rebuilds share their inputs. FNV-1a is enough for an identity;
+/// it is not a checksum, and nothing should compare it with `sha256`.
+pub fn digest(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Keeps the end and prefixes `…`: a checkout's tail says more than its head.
@@ -325,6 +372,8 @@ mod tests {
             exit_code: Some(0),
             cleanup_ok: None,
             status: "ok".into(),
+            kept: None,
+            lock: String::new(),
         }
     }
 
@@ -343,15 +392,20 @@ mod tests {
             exit_code: Some(1),
             cleanup_ok: None,
             status: "home manager switch exited with 1".into(),
+            kept: None,
+            lock: "0123456789abcdef".into(),
         };
 
-        // When, id, scope, result, duration and checkout are the columns; the status is not one.
+        // When, id, action, scope, result, duration and checkout are the columns; the status is
+        // not one.
         let cells = columns(&meta);
         assert_eq!(cells[1], "20261013-214512-1a2b");
-        assert_eq!(cells[2], "home");
-        assert_eq!(cells[3].trim(), "exit 1");
-        assert_eq!(cells[4].trim(), "02:00", "the recorded length, as a clock");
-        assert_eq!(cells[5], meta.flake, "a checkout outside the home is whole");
+        assert_eq!(cells[2], "switch", "the verb the run was started by");
+        assert_eq!(cells[3], "home");
+        assert_eq!(cells[4], "01234567", "the inputs it built with");
+        assert_eq!(cells[5].trim(), "exit 1");
+        assert_eq!(cells[6].trim(), "02:00", "the recorded length, as a clock");
+        assert_eq!(cells[7], meta.flake, "a checkout outside the home is whole");
         assert!(
             !row(&meta).contains("exited with 1"),
             "the status is not in the list"
@@ -374,7 +428,7 @@ mod tests {
         );
 
         // The offset math is what lines the row up under the headings.
-        let offset = WHEN_COLUMN + 2 + ID_COLUMN + 2;
+        let offset = WHEN_COLUMN + 2 + ID_COLUMN + 2 + ACTION_COLUMN + 2;
         let row = row(&meta);
         let headings = headings();
         assert_eq!(&headings[offset..offset + 5], "SCOPE");
@@ -385,7 +439,7 @@ mod tests {
         // Unshortened: a heading has no columns to fit.
         let heading = meta.heading();
         assert!(
-            heading.starts_with("20261013-214512-1a2b · home · switch · exit 1\n"),
+            heading.starts_with("20261013-214512-1a2b · switch · home · exit 1\n"),
             "got {heading}"
         );
         assert!(
@@ -438,8 +492,20 @@ mod tests {
             exit_code: Some(0),
             cleanup_ok: Some(true),
             status: "rebuild and cleanup completed".into(),
+            kept: Some("20261008-214700-cccc".into()),
+            lock: "fedcba9876543210".into(),
         };
 
+        assert_eq!(
+            Meta::parse(&meta.text()).kept.as_deref(),
+            Some("20261008-214700-cccc"),
+            "the lock the run kept is recorded with it"
+        );
+        assert_eq!(
+            Meta::parse(&meta.text()).lock,
+            "fedcba9876543210",
+            "and so are the inputs it built with"
+        );
         assert_eq!(
             Meta::parse(&meta.text()),
             meta,

@@ -158,7 +158,7 @@ fn the_selector_lists_the_recorded_runs_and_marks_the_chosen_one() {
     ];
 
     let rows: Vec<&crate::common::records::Meta> = runs.iter().collect();
-    let (screen, geometry) = super::picker_to_string(&rows, 1, "", false, None, 120, 12);
+    let (screen, geometry) = super::picker_to_string(&rows, 1, "", false, None, 130, 12);
     assert!(
         screen.contains("Recorded runs"),
         "the frame names itself:\n{screen}"
