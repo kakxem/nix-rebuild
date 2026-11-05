@@ -17,6 +17,7 @@ use nix_rebuild::common::scope::Scope;
 use nix_rebuild::common::setup::{self, HomeManager};
 use nix_rebuild::common::terminal;
 use nix_rebuild::common::tool_paths::{FORWARDED_TOOLS, ToolPaths};
+use nix_rebuild::modules::locks;
 use nix_rebuild::modules::panels::logs;
 use nix_rebuild::modules::runs::picker;
 use nix_rebuild::modules::runs::records as store;
@@ -187,6 +188,12 @@ fn update(
         );
     }
 
+    // Keep what this update is about to replace, before `nix flake update` touches it.
+    let kept = locks::save(checkout, locks::Reason::Update);
+    if kept.is_some() {
+        locks::prune(settings.keep_locks);
+    }
+
     let tools = tools();
     let policy = cli.cleanup_policy(settings.cleanup);
     let steps = update::plan(
@@ -210,6 +217,7 @@ fn update(
 
     let first = steps.first().context("an update has steps")?;
     let mut app = App::new(first.scope, checkout.into(), cli.boot, policy);
+    app.kept_lock = kept.map(|kept| kept.id);
     // One update activates both profiles, so its cleanup prunes both; the system
     // half asks for the sudo ticket taken above, because the frame stays unprivileged.
     app.cleanup.scope = update::cleanup_scope(home_manager);

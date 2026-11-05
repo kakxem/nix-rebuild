@@ -72,7 +72,7 @@ fn the_dialog_groups_the_settings_in_sections() {
     open(&mut app);
     let screen = render_to_string_with_state(&app, 100, 40).0;
 
-    for section in ["Panels", "Activity", "Runs", "Cleanup", "Terminal"] {
+    for section in ["Panels", "Activity", "Runs", "Locks", "Cleanup", "Terminal"] {
         assert!(
             screen.contains(section),
             "the `{section}` section is named:\n{screen}"
@@ -83,6 +83,10 @@ fn the_dialog_groups_the_settings_in_sections() {
         "with its settings under it"
     );
     assert!(screen.contains("Logs kept"), "and the recorded runs' own");
+    assert!(
+        screen.contains("Locks kept"),
+        "and the row that bounds the kept lock files"
+    );
     assert!(
         screen.contains("Remove all previous runs") && screen.contains("Cleanup now"),
         "and the buttons its slices offer"

@@ -15,6 +15,8 @@ pub use entry::{Reading, SettingEntry, SettingKind};
 pub const DEFAULT_KEEP_GENERATIONS: usize = 5;
 /// Runs the journal keeps before the oldest is dropped, unless the setting says otherwise.
 pub const DEFAULT_KEEP_LOGS: usize = 20;
+/// Lock files kept before the oldest is dropped. A lock is a few kilobytes.
+pub const DEFAULT_KEEP_LOCKS: usize = 20;
 
 /// What the shell's own screen is left with when a frame closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,8 @@ pub struct Settings {
     pub prune_logs: bool,
     /// How many recorded runs stay when pruning.
     pub keep_logs: usize,
+    /// How many saved lock files stay when pruning.
+    pub keep_locks: usize,
     /// The checkout rebuilt when no `--flake` is given.
     pub checkout: Option<String>,
     pub leave: LeaveScreen,
@@ -67,6 +71,7 @@ impl Default for Settings {
             keep_generations: DEFAULT_KEEP_GENERATIONS,
             prune_logs: true,
             keep_logs: DEFAULT_KEEP_LOGS,
+            keep_locks: DEFAULT_KEEP_LOCKS,
             checkout: None,
             leave: LeaveScreen::Clean,
             show_status: true,
@@ -105,6 +110,11 @@ impl Settings {
                 "keep_logs" => {
                     if let Ok(keep) = value.parse::<usize>() {
                         settings.keep_logs = keep.max(1);
+                    }
+                }
+                "keep_locks" => {
+                    if let Ok(keep) = value.parse::<usize>() {
+                        settings.keep_locks = keep.max(1);
                     }
                 }
                 "checkout" => {
@@ -169,6 +179,8 @@ keep_generations = {}
 # Drop the oldest recorded runs when a run finishes, and how many stay.
 prune_logs = {}
 keep_logs = {}
+# Saved lock files kept, one per update and rollback.
+keep_locks = {}
 # The checkout a run rebuilds when neither --flake nor the machine declares one.
 {checkout}
 
@@ -195,6 +207,7 @@ show_cleanup_progress = {}
             self.keep_generations,
             self.prune_logs,
             self.keep_logs,
+            self.keep_locks,
             self.leave.label(),
             self.show_status,
             self.show_activity,

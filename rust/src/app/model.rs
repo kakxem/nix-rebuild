@@ -14,6 +14,7 @@ use crate::common::nix_events::NixEvent;
 use crate::common::panels::PanelSpec;
 use crate::common::phase::Phase;
 use crate::common::scope::Scope;
+use crate::modules::locks;
 use crate::modules::panels::activity;
 use crate::modules::panels::help;
 use crate::modules::panels::logs;
@@ -118,6 +119,7 @@ impl App {
                     .into_iter()
                     .chain(activity::settings_entries())
                     .chain(records::settings_entries())
+                    .chain(locks::settings_entries())
                     .chain(cleanup::settings_entries())
                     .chain([records::exit_settings_entry()])
                     .collect(),

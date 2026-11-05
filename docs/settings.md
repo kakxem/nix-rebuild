@@ -14,6 +14,7 @@ default, and a command-line flag wins over the file.
 | `keep_generations` | how many generations the prune keeps |
 | `prune_logs` | whether the oldest recorded runs are dropped when a run finishes |
 | `keep_logs` | how many recorded runs stay |
+| `keep_locks` | how many saved lock files stay |
 | `checkout` | the flake a run rebuilds when neither `--flake` nor the wrapper declares one |
 | `leave` | `clean` or `frame`: what the shell is left with when the frame closes |
 | `show_status`, `show_activity`, `show_logs` | which cards a run starts with |
@@ -31,7 +32,7 @@ to look at. Without a terminal, `settings` prints the file instead.
 The arrows, the wheel or the pointer move through the rows (hover picks a row, a
 click changes it); `Enter` or `←`/`→` changes the selected row, and a change is
 written back at once. The rows are grouped in sections (Panels, Activity, Runs,
-Cleanup, Terminal). The list scrolls inside the box when the terminal is too
+Locks, Cleanup, Terminal). The list scrolls inside the box when the terminal is too
 short for all of it, and its bar can be dragged like a card's.
 
 A toggle reads green when it is on and red when it is off. A number is drawn with
