@@ -18,6 +18,8 @@ let
     NIX_REBUILD_HOME_MANAGER = cfg.home.manager;
     # Off by default; pure evaluation is what Nix does anyway.
     NIX_REBUILD_IMPURE = if cfg.impure then "1" else null;
+    # Off by default; nixConfig from a flake stays untrusted until it is not.
+    NIX_REBUILD_TRUST_FLAKE_CONFIG = if cfg.trustFlakeConfig then "1" else null;
   };
 
   # --set-default, not --set: the caller's own environment wins over this.
@@ -62,6 +64,25 @@ in
 
         The default is what Nix already does, so a machine that does not need it
         passes no flag at all.
+      '';
+    };
+
+    trustFlakeConfig = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether a run accepts the `nixConfig` the declared flake sets (the
+        substituters and keys a binary cache names): `--accept-flake-config` on
+        every command that reads the checkout. Without it, a nix invoked without
+        a terminal cannot answer Nix's own question and the settings are
+        ignored, which is the case inside this tool's frame, under `sudo`, and
+        in the headless unit a home switch runs in; it is the reason
+        a cachix declared in `flake.nix` goes unused. Nix's prompt and its
+        `trusted-settings.json` still cover the runs this tool does not make.
+
+        The default is what Nix already does: untrusted until the user answers.
+        Only declare it for checkouts this machine controls, since the trust
+        covers whatever those flakes set.
       '';
     };
 

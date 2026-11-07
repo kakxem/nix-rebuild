@@ -349,6 +349,57 @@ fn an_impure_update_passes_the_flag_to_every_command_that_reads_the_checkout() {
 }
 
 #[test]
+fn a_trusting_update_accepts_the_flakes_config_on_every_checkout_reading_command() {
+    let tools = ToolPaths {
+        trust_flake_config: true,
+        ..ToolPaths::fake()
+    };
+    let steps = super::plan(
+        &tools,
+        "/repo",
+        "/repo#sample",
+        "/repo#system",
+        "/repo#hb",
+        "/repo#sb",
+        false,
+        HomeManager::Standalone,
+    );
+
+    let elevated = steps[3]
+        .elevated
+        .as_ref()
+        .expect("the system step elevates");
+    let spelling = |command: &[String]| {
+        command.iter().any(|arg| arg == "--accept-flake-config")
+            || command
+                .windows(3)
+                .any(|part| part == ["--option", "accept-flake-config", "true"])
+    };
+    for command in [
+        &steps[0].command,
+        &steps[1].command,
+        &steps[2].command,
+        elevated,
+    ] {
+        assert!(
+            spelling(command),
+            "every command that reads the checkout accepts the flake's config, flag for the \
+             nix family and the option pair for Home Manager: {command:?}"
+        );
+    }
+
+    // The home activation spells the trust as an option pair, reaching the
+    // `nix build` home-manager runs inside its own argv.
+    let resolved = steps[2].resolved_command(&tools, None);
+    assert!(
+        resolved
+            .windows(2)
+            .any(|pair| pair == ["--option", "accept-flake-config"]),
+        "the home activation forwards the setting as an option: {resolved:?}"
+    );
+}
+
+#[test]
 fn a_machine_without_home_manager_updates_the_same_way() {
     // Only labels are asserted, so no ambient NIX_* path belongs in the fixture.
     let tools = ToolPaths::fake();

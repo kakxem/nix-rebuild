@@ -14,6 +14,8 @@ pub struct ToolPaths {
     pub nix_collect_garbage: String,
     /// Declared when the flake reads a path outside its own tree; every checkout-reading command then carries `--impure`.
     pub impure: bool,
+    /// Declared when the flake's `nixConfig` is accepted; every checkout-reading command then carries `--accept-flake-config`.
+    pub trust_flake_config: bool,
 }
 
 /// Env names forwarded to an elevated step, so a nested call reads the same tools.
@@ -46,6 +48,7 @@ impl ToolPaths {
             nix_collect_garbage: tool("NIX_COLLECT_GARBAGE_PATH", "nix-collect-garbage"),
             // `impure` is a declaration the caller applies, so tests never depend on the environment.
             impure: false,
+            trust_flake_config: false,
         }
     }
 
@@ -68,6 +71,26 @@ impl ToolPaths {
         }
     }
 
+    /// Append `--accept-flake-config` only when the machine declared it; untrusted
+    /// is Nix's default. It goes after `--impure` so a span test sees impure last.
+    pub fn push_trust_flake_config(&self, command: &mut Vec<String>) {
+        if self.trust_flake_config {
+            command.push("--accept-flake-config".into());
+        }
+    }
+
+    /// Home Manager's parser rejects the flag outright, so its `nix build` takes
+    /// the option pair, which `PASSTHROUGH_OPTS` forwards untouched.
+    pub fn push_trust_flake_config_option(&self, command: &mut Vec<String>) {
+        if self.trust_flake_config {
+            command.extend([
+                "--option".into(),
+                "accept-flake-config".into(),
+                "true".into(),
+            ]);
+        }
+    }
+
     /// The rebuild argv with a caller-supplied backup stamp, so tests assert the exact vector.
     /// Home Manager's `-b` suffix must stay unique or a second change to a path refuses to switch.
     pub fn rebuild_command_at(
@@ -86,6 +109,7 @@ impl ToolPaths {
                     "--flake".into(),
                     flake.into(),
                 ];
+                self.push_trust_flake_config(&mut command);
                 self.push_impure(&mut command);
                 command
             }
@@ -98,6 +122,7 @@ impl ToolPaths {
                     "-b".into(),
                     format!("backup-{stamp}-{pid}"),
                 ];
+                self.push_trust_flake_config_option(&mut command);
                 self.push_impure(&mut command);
                 command
             }
@@ -138,6 +163,7 @@ impl ToolPaths {
             nix_env: "nix-env".into(),
             nix_collect_garbage: "nix-collect-garbage".into(),
             impure: false,
+            trust_flake_config: false,
         }
     }
 }
@@ -238,6 +264,48 @@ mod tests {
             assert!(
                 !command.iter().any(|arg| arg == "--impure"),
                 "pure is what Nix already does: {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trusting_machine_carries_the_flag_on_every_checkout_reading_argv() {
+        let tools = ToolPaths {
+            trust_flake_config: true,
+            ..ToolPaths::fake()
+        };
+
+        let system =
+            tools.rebuild_command_at(Scope::System, "/repo#system", false, "20260920-134343", 1);
+        assert_eq!(
+            system.last().map(String::as_str),
+            Some("--accept-flake-config"),
+            "nixos-rebuild takes the flag by name: {system:?}"
+        );
+
+        let home =
+            tools.rebuild_command_at(Scope::Home, "/repo#sample", false, "20260920-134343", 1);
+        assert!(
+            home.windows(3)
+                .any(|part| part == ["--option", "accept-flake-config", "true"]),
+            "Home Manager rejects the flag, so it takes the option pair instead: {home:?}"
+        );
+    }
+
+    #[test]
+    fn a_machine_that_declares_no_trust_passes_no_flake_config_flag() {
+        let tools = ToolPaths::fake();
+        for command in [
+            tools.rebuild_command(Scope::System, "/repo#system", false),
+            tools.rebuild_command(Scope::Home, "/repo#sample", false),
+        ] {
+            assert!(
+                !command.iter().any(|arg| arg == "--accept-flake-config"),
+                "untrusted is the Nix default: {command:?}"
+            );
+            assert!(
+                !command.iter().any(|arg| arg == "--option"),
+                "no option pair without the declaration either: {command:?}"
             );
         }
     }

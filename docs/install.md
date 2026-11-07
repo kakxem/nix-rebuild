@@ -44,6 +44,7 @@ module's.
 | `package` | package | what to wrap, defaulting to the package beside the module |
 | `checkout` | string, unset | the flake a run rebuilds |
 | `impure` | bool, off | pass `--impure` to every command that reads the checkout |
+| `trustFlakeConfig` | bool, off | pass `--accept-flake-config` to every command that reads the checkout, so the `nixConfig` the flake sets (its substituters and keys) is not ignored; a nix without a terminal cannot answer Nix's own question about it |
 | `system.config` | string, unset | the `nixosConfigurations` attribute the system scope activates |
 | `home.config` | string, unset | the `homeConfigurations` attribute the home scope activates |
 | `home.manager` | `standalone`, `module`, `none` | what `nix-rebuild home` can do here |
@@ -65,6 +66,7 @@ Manager, and an update activates the system alone.
 | `--boot` | register the system generation for the next boot; refused with `home` |
 | `-y`, `--yes` | run cleanup without asking; cannot be combined with `--no-clean` |
 | `--no-clean` | skip generation pruning and garbage collection |
+| `--accept-flake-config` | turn `trustFlakeConfig` on for this run, on `system`, `home`, `update` and `locks` |
 | `runs <ID>` | open one recorded run; `last` is the newest |
 | `runs --list` | print the recorded runs with their ids |
 | `runs <ID> --logs` | print one run's log, for a pipe; with no id, the newest run |

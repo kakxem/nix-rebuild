@@ -125,6 +125,12 @@ pub struct Cli {
 
     #[arg(
         long,
+        help = "Accept what the flake's nixConfig sets (substituters, keys); otherwise only the declared trust counts"
+    )]
+    pub accept_flake_config: bool,
+
+    #[arg(
+        long,
         conflicts_with_all = ["id", "logs"],
         help = "Print the recorded runs or the kept locks, with their ids, instead of asking which to open"
     )]
@@ -169,6 +175,7 @@ impl Cli {
                 (self.no_clean, "--no-clean"),
                 (self.yes, "--yes"),
                 (self.flake.is_some(), "--flake"),
+                (self.accept_flake_config, "--accept-flake-config"),
                 (self.list, "--list"),
                 (self.logs, "--logs"),
                 (self.delete, "--delete"),
@@ -189,6 +196,7 @@ impl Cli {
                 (self.boot, "--boot"),
                 (self.no_clean, "--no-clean"),
                 (self.flake.is_some(), "--flake"),
+                (self.accept_flake_config, "--accept-flake-config"),
             ] {
                 if given {
                     return Err(format!(
@@ -259,6 +267,12 @@ impl Cli {
             .or_else(|| env::var("FLAKE_PATH").ok())
             .or_else(|| configured.map(str::to_owned))
             .filter(|checkout| !checkout.is_empty())
+    }
+
+    /// The flag turns the trust on for one run; the declaration sets the machine's
+    /// standing answer. Either on means on: the flag has no way to un-declare.
+    pub fn trust_flake_config(&self) -> bool {
+        self.accept_flake_config || crate::common::setup::trust_flake_config()
     }
 }
 
@@ -502,6 +516,40 @@ mod tests {
             cli.check_run_arguments().is_ok(),
             "a bare `settings` is valid"
         );
+    }
+
+    #[test]
+    fn the_trust_flag_is_a_rebuild_flag_with_its_own_verb_rules() {
+        use crate::common::cli::Cli;
+        use clap::Parser;
+
+        // The flag only turns things on, so a machine's declaration already
+        // covering it is not asserted here: `setup/tests.rs` reads that side.
+        assert!(
+            Cli::parse_from(["nix-rebuild", "home", "--accept-flake-config"]).trust_flake_config(),
+            "the flag turns the trust on for one run"
+        );
+        assert!(
+            !Cli::parse_from(["nix-rebuild", "home"]).accept_flake_config,
+            "without it, only the machine's declaration decides"
+        );
+
+        let locks = Cli::parse_from(["nix-rebuild", "locks", "--accept-flake-config"]);
+        assert!(
+            locks.check_run_arguments().is_ok(),
+            "a rollback rebuilds, so the lock verb takes the flag"
+        );
+
+        for args in [
+            vec!["nix-rebuild", "runs", "--accept-flake-config"],
+            vec!["nix-rebuild", "settings", "--accept-flake-config"],
+        ] {
+            let cli = Cli::parse_from(args.iter().copied());
+            assert!(
+                cli.check_run_arguments().is_err(),
+                "{args:?} rebuilds nothing, so there is no trust to give"
+            );
+        }
     }
 
     #[test]

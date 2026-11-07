@@ -90,6 +90,7 @@ fn intentional_cleanup_cancellation_is_not_reported_as_an_error() {
         nix_env: "unused".into(),
         nix_collect_garbage: "unused".into(),
         impure: false,
+        trust_flake_config: false,
     };
     let (tx, rx) = crossbeam_channel::unbounded();
     crate::modules::work::cleanup::run(Scope::Home, tools, tx, control, 5);
@@ -499,6 +500,7 @@ fn a_plain_cleanup_runs_the_stages_and_reports_a_failure() {
         nix_env: "unused".into(),
         nix_collect_garbage: script("nix-collect-garbage-ok", "exit 0"),
         impure: false,
+        trust_flake_config: false,
     };
     assert!(
         crate::modules::work::cleanup::run_plain(Scope::Home, 5, &tools).is_ok(),
@@ -602,6 +604,7 @@ fn a_both_pass_prunes_home_then_the_system_profile_through_sudo() {
         nix_env: script("nix-env", "exit 0"),
         nix_collect_garbage: script("nix-collect-garbage", "exit 0"),
         impure: false,
+        trust_flake_config: false,
     };
     let path = format!(
         "{}:{}",

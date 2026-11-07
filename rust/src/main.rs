@@ -33,9 +33,10 @@ const FORWARDED_SESSION: &[&str] = &[
 ];
 
 /// The tools a run spawns. `impure` is applied here so `ToolPaths::from_env` stays environment-independent.
-fn tools() -> ToolPaths {
+fn tools(cli: &Cli) -> ToolPaths {
     ToolPaths {
         impure: setup::impure(),
+        trust_flake_config: cli.trust_flake_config(),
         ..ToolPaths::from_env()
     }
 }
@@ -68,7 +69,7 @@ fn real_main() -> anyhow::Result<i32> {
     }
 
     if cli.target.is_some_and(Target::edits_settings) {
-        return settings_frame();
+        return settings_frame(&cli);
     }
 
     // A listing is a reading, not a rebuild: it needs no checkout, no declaration, no terminal.
@@ -205,7 +206,7 @@ fn real_main() -> anyhow::Result<i32> {
         return reexec_as_root(scope, &cli, &checkout);
     }
 
-    let tools = tools();
+    let tools = tools(&cli);
     let command = tools.rebuild_command(scope, &flake, cli.boot);
     let policy = cli.cleanup_policy(settings.cleanup);
     let mut app = App::new(scope, flake, cli.boot, policy);
@@ -254,7 +255,7 @@ fn update(cli: &Cli, settings: &Settings, deployment: &Deployment<'_>) -> anyhow
         locks::prune(settings.keep_locks);
     }
 
-    let tools = tools();
+    let tools = tools(cli);
     let steps = update::plan(
         &tools,
         checkout,
@@ -337,7 +338,7 @@ fn restore_and_rebuild(
     let restored = locks::restore(&lock.id, checkout)?;
     locks::prune(settings.keep_locks);
 
-    let tools = tools();
+    let tools = tools(cli);
     let steps = update::plan_pinned(
         &tools,
         deployment.home_flake,
@@ -392,7 +393,7 @@ fn activate(
 }
 
 /// The `settings` verb: the same dialog the frame opens, in a frame with nothing to run.
-fn settings_frame() -> anyhow::Result<i32> {
+fn settings_frame(cli: &Cli) -> anyhow::Result<i32> {
     let mut app = App::new(Scope::Home, String::new(), false, CleanupPolicy::Ask);
     app.apply_settings(&Settings::load());
     // The dialog is the point of this frame, so it opens at once; no card claims work here, or
@@ -401,7 +402,7 @@ fn settings_frame() -> anyhow::Result<i32> {
     app.config.show_status = false;
     app.config.show_activity = false;
     app.config.show_logs = false;
-    runtime::run_settings(&mut app, tools())
+    runtime::run_settings(&mut app, tools(cli))
 }
 
 /// The `runs` verb. A rollback asked for in the selector comes back as the lock to restore:
@@ -571,6 +572,9 @@ fn reexec_as_root(scope: Scope, cli: &Cli, checkout: &str) -> anyhow::Result<i32
     command.arg("--flake").arg(checkout);
     if cli.boot {
         command.arg("--boot");
+    }
+    if cli.accept_flake_config {
+        command.arg("--accept-flake-config");
     }
     if cli.yes {
         command.arg("--yes");

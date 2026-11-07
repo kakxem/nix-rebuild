@@ -1,13 +1,15 @@
 //! The declaration the wrapper carries, and what happens when it is missing.
 
-use super::{HomeManager, home_config, home_manager, impure, system_config};
+use super::{HomeManager, home_config, home_manager, impure, system_config, trust_flake_config};
 
 /// Run `body` with the declaration cleared, as a bare binary sees it.
 fn without_a_declaration<T>(body: impl FnOnce() -> T) -> T {
     temp_env::with_var("NIX_REBUILD_HOME_MANAGER", None::<&str>, || {
         temp_env::with_var("NIX_REBUILD_SYSTEM_CONFIG", None::<&str>, || {
             temp_env::with_var("NIX_REBUILD_HOME_CONFIG", None::<&str>, || {
-                temp_env::with_var("NIX_REBUILD_IMPURE", None::<&str>, body)
+                temp_env::with_var("NIX_REBUILD_IMPURE", None::<&str>, || {
+                    temp_env::with_var("NIX_REBUILD_TRUST_FLAKE_CONFIG", None::<&str>, body)
+                })
             })
         })
     })
@@ -38,6 +40,11 @@ fn a_machine_that_declares_nothing_is_told_what_to_declare() {
             !impure(),
             "an undeclared machine evaluates its flake the way Nix already does"
         );
+
+        assert!(
+            !trust_flake_config(),
+            "an undeclared machine keeps the flake's settings untrusted, as Nix does"
+        );
     });
 }
 
@@ -53,6 +60,27 @@ fn a_machine_that_declares_an_impure_flake_is_heard() {
     for value in ["0", "false", ""] {
         temp_env::with_var("NIX_REBUILD_IMPURE", Some(value), || {
             assert!(!impure(), "{value:?} leaves the evaluation pure");
+        });
+    }
+}
+
+#[test]
+fn a_machine_that_declares_the_flakes_config_trusted_is_heard() {
+    for value in ["1", "true"] {
+        temp_env::with_var("NIX_REBUILD_TRUST_FLAKE_CONFIG", Some(value), || {
+            assert!(
+                trust_flake_config(),
+                "{value} accepts the flake's nixConfig"
+            );
+        });
+    }
+
+    for value in ["0", "false", ""] {
+        temp_env::with_var("NIX_REBUILD_TRUST_FLAKE_CONFIG", Some(value), || {
+            assert!(
+                !trust_flake_config(),
+                "{value:?} leaves the flake's settings untrusted"
+            );
         });
     }
 }

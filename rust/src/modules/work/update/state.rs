@@ -62,6 +62,7 @@ impl Step {
 /// The lock file's own step, run from inside the checkout so `nix flake update` finds it.
 pub fn lock_step(tools: &ToolPaths, checkout: &str) -> Step {
     let mut command = vec![tools.nix(), "flake".into(), "update".into()];
+    tools.push_trust_flake_config(&mut command);
     tools.push_impure(&mut command);
     Step {
         label: "nix flake update".into(),
@@ -109,6 +110,7 @@ pub fn plan_pinned(
                 command.push(home_build.into());
             }
             command.push(system_build.into());
+            tools.push_trust_flake_config(&mut command);
             tools.push_impure(&mut command);
             command
         },

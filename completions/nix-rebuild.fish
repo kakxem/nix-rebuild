@@ -28,6 +28,9 @@ complete -c nix-rebuild -l no-clean \
     -d 'Skip generation pruning and garbage collection'
 complete -c nix-rebuild -l flake -r \
     -d 'Rebuild this checkout instead of the configured one'
+complete -c nix-rebuild -l accept-flake-config \
+    -n '__fish_seen_subcommand_from system home update locks' \
+    -d 'Accept what the flake nixConfig sets (substituters, keys) for this run'
 
 # The id and the two ways of reading a run belong to `runs`; `locks` takes the same id.
 complete -c nix-rebuild -l list \

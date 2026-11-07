@@ -48,6 +48,7 @@ pub const DECLARATIONS: &[&str] = &[
     "NIX_REBUILD_HOME_CONFIG",
     "NIX_REBUILD_HOME_MANAGER",
     "NIX_REBUILD_IMPURE",
+    "NIX_REBUILD_TRUST_FLAKE_CONFIG",
 ];
 
 /// The kind the machine declares, or an error when nothing is declared.
@@ -97,6 +98,13 @@ fn attribute_name(value: &str, prefix: &str) -> String {
 /// so the flag is added only where the module's `impure` option declares it.
 pub fn impure() -> bool {
     let declared = declared("NIX_REBUILD_IMPURE").unwrap_or_default();
+    matches!(declared.trim(), "1" | "true")
+}
+
+/// Whether the module declares the flake's `nixConfig` accepted. Same reader
+/// contract as `impure`: absent or off means untrusted, the Nix default.
+pub fn trust_flake_config() -> bool {
+    let declared = declared("NIX_REBUILD_TRUST_FLAKE_CONFIG").unwrap_or_default();
     matches!(declared.trim(), "1" | "true")
 }
 
